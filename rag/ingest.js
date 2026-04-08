@@ -65,6 +65,7 @@ export async function fetchGitHubRepo(repoUrl) {
       contents.push({
         file: file.name,
         text: chunk,
+        url: file.html_url,
       });
     }
   }

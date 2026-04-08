@@ -4,11 +4,13 @@ import axios from "axios";
 import { getEmbedding, fetchGitHubRepo } from "./rag/ingest.js";
 import { getTopKMatches } from "./rag/query.js";
 import fs from "fs";
+import cors from "cors";
 
 const DATA_PATH = "data/store.json";
 dotenv.config();
 
 const app = express();
+app.use(cors());
 app.use(express.json());
 
 // in-memory vector store
@@ -61,8 +63,8 @@ app.post("/query", async (req, res) => {
     const results = getTopKMatches(queryEmbedding, dataStore, 2);
 
     const context = results
-  .map(r => `[Source: ${r.source}]\n${r.text.slice(0, 200)}`)
-  .join("\n\n");
+      .map((r) => `[Source: ${r.source}]\n${r.text.slice(0, 200)}`)
+      .join("\n\n");
 
     // 3. prompt
     const prompt = `
@@ -79,7 +81,6 @@ Answer clearly:
 
     /* -------------------- GROQ API -------------------- */
     if (process.env.USE_API === "true") {
-
       // cache models once
       if (!cachedModels) {
         const modelRes = await axios.get(
@@ -88,17 +89,17 @@ Answer clearly:
             headers: {
               Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
             },
-          }
+          },
         );
 
-        cachedModels = modelRes.data.data.map(m => m.id);
+        cachedModels = modelRes.data.data.map((m) => m.id);
       }
 
       const models = cachedModels.filter(
-        m => m.includes("llama") || m.includes("mixtral")
+        (m) => m.includes("llama") || m.includes("mixtral"),
       );
 
-      // ✅ USE SAVED MODEL (FAST PATH)
+      // USE SAVED MODEL (FAST PATH)
       if (selectedModel) {
         try {
           const response = await axios.post(
@@ -119,6 +120,7 @@ Rules:
 - If unsure, say: "Not enough information in context"
 - Keep answers concise (4-6 lines)
 - Focus on correctness over completeness
+- If code is present, format it using triple backticks with language
 `,
                 },
                 {
@@ -133,11 +135,10 @@ Rules:
                 "Content-Type": "application/json",
               },
               timeout: 10000,
-            }
+            },
           );
 
           answer = response.data.choices[0].message.content;
-
         } catch (err) {
           console.log("Saved model failed, retrying...");
           selectedModel = null; // reset
@@ -167,6 +168,7 @@ Rules:
 - Focus on explaining code logic, purpose, and flow
 - If code is present, explain what it does step-by-step
 - Mention important functions, variables, or patterns if relevant
+- If code is present, format it using triple backticks with language
 `,
                   },
                   {
@@ -181,15 +183,14 @@ Rules:
                   "Content-Type": "application/json",
                 },
                 timeout: 10000,
-              }
+              },
             );
 
-            selectedModel = model; // ✅ cache model
+            selectedModel = model; // cache model
             console.log("Selected model:", model);
 
             answer = response.data.choices[0].message.content;
             break;
-
           } catch (err) {
             console.log("Skipping model:", model);
             continue;
@@ -200,25 +201,25 @@ Rules:
       if (!answer) {
         throw new Error("No working model found");
       }
-
     } else {
       /* -------------------- OLLAMA -------------------- */
-      const response = await axios.post(
-        "http://localhost:11434/api/generate",
-        {
-          model: "tinyllama",
-          prompt: prompt,
-          stream: false,
-        }
-      );
+      const response = await axios.post("http://localhost:11434/api/generate", {
+        model: "tinyllama",
+        prompt: prompt,
+        stream: false,
+      });
 
       answer = response.data.response;
     }
 
-    const sources = results.map(r => r.source);
+    const sources = results.map((r) => ({
+      name: r.source,
+      url: r.url,
+    }));
 
     res.json({ answer, sources });
 
+    res.json({ answer, sources });
   } catch (err) {
     console.error("ERROR:", err.message);
     res.status(500).json({ error: "Something went wrong" });
@@ -240,6 +241,7 @@ app.post("/ingest/github", async (req, res) => {
       dataStore.push({
         text: file.text,
         source: file.file,
+        url: file.url,
         embedding,
       });
     }
@@ -247,7 +249,6 @@ app.post("/ingest/github", async (req, res) => {
     saveData();
 
     res.json({ message: "GitHub repo ingested" });
-
   } catch (err) {
     console.error("ERROR:", err.message);
     res.status(500).json({ error: "GitHub ingestion failed" });
