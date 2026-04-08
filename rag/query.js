@@ -1,26 +1,25 @@
-export function cosineSimilarity(vecA, vecB) {
+export function cosineSimilarity(a, b) {
   let dot = 0;
-  let magA = 0;
-  let magB = 0;
+  let normA = 0;
+  let normB = 0;
 
-  for (let i = 0; i < vecA.length; i++) {
-    dot += vecA[i] * vecB[i];
-    magA += vecA[i] * vecA[i];
-    magB += vecB[i] * vecB[i];
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
   }
 
-  return dot / (Math.sqrt(magA) * Math.sqrt(magB));
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
-export function getTopKMatches(queryEmbedding, storedData, k = 3) {
-  const scores = storedData.map(item => {
-    return {
-      text: item.text,
-      score: cosineSimilarity(queryEmbedding, item.embedding),
-    };
-  });
+export function getTopKMatches(queryEmbedding, dataStore, k) {
+  const scored = dataStore.map(item => ({
+    text: item.text,
+    source: item.source || "manual",
+    score: cosineSimilarity(queryEmbedding, item.embedding),
+  }));
 
-  scores.sort((a, b) => b.score - a.score);
+  scored.sort((a, b) => b.score - a.score);
 
-  return scores.slice(0, k);
+  return scored.slice(0, k);
 }
