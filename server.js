@@ -1,51 +1,26 @@
-import express from "express";
 import dotenv from "dotenv";
-import axios from "axios";
-import { getEmbedding, fetchGitHubRepo } from "./rag/ingest.js";
-import { getTopKMatches } from "./rag/query.js";
-import fs from "fs";
-import cors from "cors";
-
-const DATA_PATH = "data/store.json";
 dotenv.config();
+
+import express from "express";
+import axios from "axios";
+import cors from "cors";
+import { Pinecone } from "@pinecone-database/pinecone";
+import { getEmbedding, fetchGitHubRepo } from "./rag/ingest.js";
+
+// Pinecone init
+const pc = new Pinecone({
+  apiKey: process.env.PINECONE_API_KEY,
+});
+
+export const index = pc.index(process.env.PINECONE_INDEX);
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// in-memory vector store
-let dataStore = [];
-
-// load existing data
-if (fs.existsSync(DATA_PATH)) {
-  dataStore = JSON.parse(fs.readFileSync(DATA_PATH));
-  console.log("Loaded existing data:", dataStore.length);
-}
-
-// save function
-function saveData() {
-  fs.writeFileSync(DATA_PATH, JSON.stringify(dataStore, null, 2));
-}
-
 // cache models
 let cachedModels = null;
-
-// cache selected working model
 let selectedModel = null;
-
-/* -------------------- ADD TEXT -------------------- */
-app.post("/add", async (req, res) => {
-  const { text } = req.body;
-
-  if (!text) return res.json({ message: "No text provided" });
-
-  const embedding = await getEmbedding(text);
-
-  dataStore.push({ text, embedding });
-  saveData();
-
-  res.json({ message: "Text added" });
-});
 
 /* -------------------- QUERY -------------------- */
 app.post("/query", async (req, res) => {
@@ -60,10 +35,20 @@ app.post("/query", async (req, res) => {
     const queryEmbedding = await getEmbedding(question);
 
     // 2. retrieve
-    const results = getTopKMatches(queryEmbedding, dataStore, 2);
+    const queryResponse = await index.query({
+      vector: queryEmbedding,
+      topK: 2,
+      includeMetadata: true,
+    });
+
+    //  define results
+    const results = queryResponse.matches || [];
 
     const context = results
-      .map((r) => `[Source: ${r.source}]\n${r.text.slice(0, 200)}`)
+      .map(
+        (r) =>
+          `[Source: ${r.metadata.source}]\n${r.metadata.text.slice(0, 200)}`,
+      )
       .join("\n\n");
 
     // 3. prompt
@@ -81,7 +66,6 @@ Answer clearly:
 
     /* -------------------- GROQ API -------------------- */
     if (process.env.USE_API === "true") {
-      // cache models once
       if (!cachedModels) {
         const modelRes = await axios.get(
           "https://api.groq.com/openai/v1/models",
@@ -99,7 +83,7 @@ Answer clearly:
         (m) => m.includes("llama") || m.includes("mixtral"),
       );
 
-      // USE SAVED MODEL (FAST PATH)
+      // FAST PATH
       if (selectedModel) {
         try {
           const response = await axios.post(
@@ -109,19 +93,28 @@ Answer clearly:
               messages: [
                 {
                   role: "system",
-                  content: `
-You are a senior software engineer.
+                  content: `You are a RAG-based Developer Assistant AI.
 
-Answer ONLY using the given context.
+Goal:
+Give fast, concise, developer-focused answers using ONLY provided context.
 
-Rules:
-- Do NOT use outside knowledge
-- Do NOT make assumptions
-- If unsure, say: "Not enough information in context"
-- Keep answers concise (4-6 lines)
-- Focus on correctness over completeness
-- If code is present, format it using triple backticks with language
-`,
+Response Rules:
+- Max 60 words
+- Start with 1-line direct answer
+- Use compact phrasing (no long sentences)
+- If needed, add 2–3 short bullet points
+- Prefer clarity over completeness
+- No repetition, no filler, no generic explanations
+- If context is insufficient, say: "Not enough information in context"
+
+Style:
+- Technical, SDE-level
+- Direct and confident
+- Optimize for speed (low tokens)
+
+Strictly follow this format:
+Answer: <1-line>
+Key Points: <optional bullets or inline phrases>`,
                 },
                 {
                   role: "user",
@@ -139,13 +132,12 @@ Rules:
           );
 
           answer = response.data.choices[0].message.content;
-        } catch (err) {
-          console.log("Saved model failed, retrying...");
-          selectedModel = null; // reset
+        } catch {
+          selectedModel = null;
         }
       }
 
-      // FIND MODEL (ONLY ONCE)
+      // FIND MODEL
       if (!selectedModel) {
         for (let model of models) {
           try {
@@ -154,9 +146,7 @@ Rules:
               {
                 model,
                 messages: [
-                  {
-                    role: "system",
-                    content: `
+                  { role: "system", content: `
 You are a senior software engineer.
 
 Answer ONLY using the given context.
@@ -169,12 +159,8 @@ Rules:
 - If code is present, explain what it does step-by-step
 - Mention important functions, variables, or patterns if relevant
 - If code is present, format it using triple backticks with language
-`,
-                  },
-                  {
-                    role: "user",
-                    content: prompt,
-                  },
+` },
+                  { role: "user", content: prompt },
                 ],
               },
               {
@@ -186,21 +172,16 @@ Rules:
               },
             );
 
-            selectedModel = model; // cache model
-            console.log("Selected model:", model);
-
+            selectedModel = model;
             answer = response.data.choices[0].message.content;
             break;
-          } catch (err) {
-            console.log("Skipping model:", model);
+          } catch {
             continue;
           }
         }
       }
 
-      if (!answer) {
-        throw new Error("No working model found");
-      }
+      if (!answer) throw new Error("No working model found");
     } else {
       /* -------------------- OLLAMA -------------------- */
       const response = await axios.post("http://localhost:11434/api/generate", {
@@ -213,12 +194,11 @@ Rules:
     }
 
     const sources = results.map((r) => ({
-      name: r.source,
-      url: r.url,
+      name: r.metadata.source,
+      url: r.metadata.url,
     }));
 
-    res.json({ answer, sources });
-
+    //  only one response
     res.json({ answer, sources });
   } catch (err) {
     console.error("ERROR:", err.message);
@@ -238,15 +218,18 @@ app.post("/ingest/github", async (req, res) => {
     for (let file of files) {
       const embedding = await getEmbedding(file.text);
 
-      dataStore.push({
-        text: file.text,
-        source: file.file,
-        url: file.url,
-        embedding,
-      });
+      await index.upsert([
+        {
+          id: `${file.file}-${Date.now()}`,
+          values: embedding,
+          metadata: {
+            text: file.text,
+            source: file.file,
+            url: file.url,
+          },
+        },
+      ]);
     }
-
-    saveData();
 
     res.json({ message: "GitHub repo ingested" });
   } catch (err) {
