@@ -149,7 +149,7 @@ function App() {
     setMessages((prev) => [...prev, userMsg]);
 
     try {
-      const res = await axios.post("http://localhost:3000/query", {
+      const res = await axios.post("https://devassist-ai-6hkd.onrender.com/query", {
         question,
       });
 
@@ -174,7 +174,7 @@ function App() {
     setIngesting(true);
 
     try {
-      await axios.post("http://localhost:3000/ingest/github", {
+      await axios.post("https://devassist-backend.onrender.com/ingest/github", {
         repoUrl,
       });
 

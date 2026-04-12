@@ -15,7 +15,9 @@ const pc = new Pinecone({
 export const index = pc.index(process.env.PINECONE_INDEX);
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: "*"
+}));
 app.use(express.json());
 
 // cache models
