@@ -22,7 +22,27 @@ app.use(express.json());
 let cachedModels = null;
 let selectedModel = null;
 
-/* -------------------- QUERY -------------------- */
+// CACHE
+const cache = new Map();
+const CACHE_TTL = 1000 * 60 * 5; // 5 minutes
+
+// Tavily helper
+async function tavilySearch(query) {
+  const res = await axios.post("https://api.tavily.com/search", {
+    api_key: process.env.TAVILY_API_KEY,
+    query,
+    search_depth: "basic",
+    max_results: 3,
+  });
+
+  return res.data.results.map((r) => ({
+    content: r.content,
+    title: r.title,
+    url: r.url,
+  }));
+}
+
+//  QUERY HANDLER
 app.post("/query", async (req, res) => {
   const { question } = req.body;
 
@@ -30,41 +50,55 @@ app.post("/query", async (req, res) => {
     return res.json({ answer: "Invalid question" });
   }
 
+  // CACHE CHECK
+  if (cache.has(question)) {
+    const cached = cache.get(question);
+    if (Date.now() - cached.timestamp < CACHE_TTL) {
+      return res.json(cached.data);
+    } else {
+      cache.delete(question);
+    }
+  }
+
   try {
-    // 1. embedding
     const queryEmbedding = await getEmbedding(question);
 
-    // 2. retrieve
-    const queryResponse = await index.query({
-      vector: queryEmbedding,
-      topK: 2,
-      includeMetadata: true,
-    });
+    // faster retrieval
+    const queryResponse = await index.query(
+      {
+        vector: queryEmbedding,
+        topK: 2,
+        includeMetadata: true,
+      },
+      {
+        namespace: "devassist",
+      },
+    );
 
-    //  define results
     const results = queryResponse.matches || [];
+    const topScore = results[0]?.score || 0;
 
     const context = results
       .map(
         (r) =>
-          `[Source: ${r.metadata.source}]\n${r.metadata.text.slice(0, 200)}`,
+          `[Source: ${r.metadata.source}]\n${r.metadata.text.slice(0, 200)}`, // 🔥 reduced size
       )
       .join("\n\n");
 
-    // 3. prompt
     const prompt = `
 Context:
-${context}
+${context || "No relevant context found"}
 
 Question:
 ${question}
 
-Answer clearly:
+Answer clearly and precisely:
 `;
 
     let answer = "";
+    // track if web search used
+    let usedWeb = false;
 
-    /* -------------------- GROQ API -------------------- */
     if (process.env.USE_API === "true") {
       if (!cachedModels) {
         const modelRes = await axios.get(
@@ -83,130 +117,122 @@ Answer clearly:
         (m) => m.includes("llama") || m.includes("mixtral"),
       );
 
-      // FAST PATH
-      if (selectedModel) {
+      for (let model of models) {
         try {
           const response = await axios.post(
             "https://api.groq.com/openai/v1/chat/completions",
             {
-              model: selectedModel,
+              model,
               messages: [
                 {
                   role: "system",
-                  content: `You are a RAG-based Developer Assistant AI.
+                  content: `
+You are a RAG-based Developer Assistant AI.
 
-Goal:
-Give fast, concise, developer-focused answers using ONLY provided context.
-
-Response Rules:
-- Max 60 words
-- Start with 1-line direct answer
-- Use compact phrasing (no long sentences)
-- If needed, add 2–3 short bullet points
-- Prefer clarity over completeness
-- No repetition, no filler, no generic explanations
-- If context is insufficient, say: "Not enough information in context"
-
-Style:
-- Technical, SDE-level
-- Direct and confident
-- Optimize for speed (low tokens)
-
-Strictly follow this format:
-Answer: <1-line>
-Key Points: <optional bullets or inline phrases>`,
+Rules:
+- Answer ONLY using provided context
+- If insufficient → say: "Not enough information"
+- Keep answers concise (max 4 lines)
+- Use bullet points if helpful
+- Explain simply (junior dev level)
+- Avoid repetition
+`,
                 },
-                {
-                  role: "user",
-                  content: prompt,
-                },
+                { role: "user", content: prompt },
               ],
+              max_tokens: 200,
             },
             {
               headers: {
                 Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
                 "Content-Type": "application/json",
               },
-              timeout: 10000,
             },
           );
 
           answer = response.data.choices[0].message.content;
+          selectedModel = model;
+          break;
         } catch {
-          selectedModel = null;
-        }
-      }
-
-      // FIND MODEL
-      if (!selectedModel) {
-        for (let model of models) {
-          try {
-            const response = await axios.post(
-              "https://api.groq.com/openai/v1/chat/completions",
-              {
-                model,
-                messages: [
-                  { role: "system", content: `
-You are a senior software engineer.
-
-Answer ONLY using the given context.
-
-Rules:
-- Do NOT use outside knowledge
-- If context is insufficient, say: "Not enough information in context"
-- Be concise (4-6 lines)
-- Focus on explaining code logic, purpose, and flow
-- If code is present, explain what it does step-by-step
-- Mention important functions, variables, or patterns if relevant
-- If code is present, format it using triple backticks with language
-` },
-                  { role: "user", content: prompt },
-                ],
-              },
-              {
-                headers: {
-                  Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-                  "Content-Type": "application/json",
-                },
-                timeout: 10000,
-              },
-            );
-
-            selectedModel = model;
-            answer = response.data.choices[0].message.content;
-            break;
-          } catch {
-            continue;
-          }
+          continue;
         }
       }
 
       if (!answer) throw new Error("No working model found");
-    } else {
-      /* -------------------- OLLAMA -------------------- */
-      const response = await axios.post("http://localhost:11434/api/generate", {
-        model: "tinyllama",
-        prompt: prompt,
-        stream: false,
-      });
-
-      answer = response.data.response;
     }
 
-    const sources = results.map((r) => ({
+    let sources = results.map((r) => ({
       name: r.metadata.source,
       url: r.metadata.url,
     }));
 
-    //  only one response
-    res.json({ answer, sources });
+    if (!selectedModel && cachedModels?.length > 0) {
+      selectedModel = cachedModels[0];
+    }
+
+    const isLowConfidence = topScore < 0.75;
+
+    const isBadAnswer =
+      answer.includes("Not enough information") || answer.trim().length < 30;
+
+    // detect no results
+    const noResults = results.length === 0;
+
+    // better control over web search (only when truly needed)
+    if (noResults || isLowConfidence || isBadAnswer) {
+      usedWeb = true;
+      const webResults = await tavilySearch(question);
+
+      const webContext = webResults.map((r) => r.content).join("\n\n");
+
+      const newPrompt = `
+Use this web context to answer clearly:
+
+${webContext}
+
+Question:
+${question}
+`;
+
+      const response = await axios.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        {
+          model: selectedModel || cachedModels[0],
+          messages: [{ role: "user", content: newPrompt }],
+          max_tokens: 200,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+        },
+      );
+
+      answer = response.data.choices[0].message.content;
+
+      sources = [
+        ...sources,
+        ...webResults.map((r) => ({
+          name: r.title,
+          url: r.url,
+        })),
+      ];
+    }
+
+    cache.set(question, {
+      // data: { answer, sources },
+      data: { answer, sources, usedWeb },
+      timestamp: Date.now(),
+    });
+
+    res.json({ answer, sources, usedWeb });
   } catch (err) {
-    console.error("ERROR:", err.message);
     res.status(500).json({ error: "Something went wrong" });
   }
 });
 
-/* -------------------- GITHUB INGEST -------------------- */
+// GITHUB INGEST
 app.post("/ingest/github", async (req, res) => {
   const { repoUrl } = req.body;
 
@@ -215,27 +241,85 @@ app.post("/ingest/github", async (req, res) => {
   try {
     const files = (await fetchGitHubRepo(repoUrl)).slice(0, 20);
 
-    for (let file of files) {
-      const embedding = await getEmbedding(file.text);
+    if (!files.length) {
+      return res.status(400).json({ error: "No files fetched" });
+    }
 
-      await index.upsert([
-        {
+    for (let file of files) {
+      try {
+        if (!file?.text || file.text.trim().length === 0) {
+          continue;
+        }
+
+        // skip useless files
+        if (
+          file.file.includes("config") ||
+          file.file.includes(".json") ||
+          file.file.includes("lock") ||
+          file.file.includes("package")
+        ) {
+          continue;
+        }
+
+        const safeText = file.text.slice(0, 1000); // 🔥 FIX
+
+        // skip too small text
+        if (safeText.length < 50) {
+          continue;
+        }
+
+        const embedding = await getEmbedding(safeText);
+
+        // VALIDATION  
+        if (
+          !embedding ||
+          !Array.isArray(embedding) ||
+          embedding.length !== 384 ||
+          embedding.some(
+            (v) => typeof v !== "number" || isNaN(v) || !isFinite(v),
+          )
+        ) {
+          continue;
+        }
+
+        // BUILD RECORD FIRST 
+        const record = {
           id: `${file.file}-${Date.now()}`,
           values: embedding,
           metadata: {
-            text: file.text,
+            text: safeText,
             source: file.file,
             url: file.url,
+            type: "code",
           },
-        },
-      ]);
+        };
+
+        // FINAL SAFETY CHECK BEFORE UPSERT
+        if (
+          !record.values ||
+          record.values.length !== 384 ||
+          !record.values.every((v) => typeof v === "number" && isFinite(v))
+        ) {
+          continue;
+        }
+
+        // SAFE UPSERT (ERROR ELIMINATION)
+        try {
+          await index.upsert([record], {
+            namespace: "devassist",
+          });
+        } catch (err) {
+          continue;
+        }
+      } catch (err) {
+        continue;
+      }
     }
 
-    res.json({ message: "GitHub repo ingested" });
+    res.json({ message: "Ingestion complete" });
   } catch (err) {
-    console.error("ERROR:", err.message);
-    res.status(500).json({ error: "GitHub ingestion failed" });
+    res.status(500).json({ error: "Ingestion failed" });
   }
 });
 
-app.listen(3000, () => console.log("Server running"));
+app.listen(3000);

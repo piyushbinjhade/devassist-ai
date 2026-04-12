@@ -2,11 +2,11 @@ import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
-import ReactMarkdown from "react-markdown"; 
-import remarkGfm from "remark-gfm"; 
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 function CodeBlock({ code, language }) {
-  const [copied, setCopied] = useState(false); 
+  const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(code);
@@ -27,7 +27,7 @@ function CodeBlock({ code, language }) {
           right: "10px",
           top: "10px",
           fontSize: "12px",
-          background: copied ? "#16a34a" : "#27272a", 
+          background: copied ? "#16a34a" : "#27272a",
           border: "none",
           padding: "4px 8px",
           borderRadius: "6px",
@@ -67,79 +67,78 @@ function App() {
   }, [messages, loading]);
 
   function renderMessage(text) {
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        code({ inline, className, children }) {
-          const match = /language-(\w+)/.exec(className || "");
-          const code = String(children).replace(/\n$/, "");
+    return (
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          code({ inline, className, children }) {
+            const match = /language-(\w+)/.exec(className || "");
+            const code = String(children).replace(/\n$/, "");
 
-          // local state inside component
-          const [copied, setCopied] = useState(false);
+            // local state inside component
+            const [copied, setCopied] = useState(false);
 
-          const handleCopy = () => {
-            navigator.clipboard.writeText(code);
-            setCopied(true);
+            const handleCopy = () => {
+              navigator.clipboard.writeText(code);
+              setCopied(true);
 
-            setTimeout(() => {
-              setCopied(false);
-            }, 1500);
-          };
+              setTimeout(() => {
+                setCopied(false);
+              }, 1500);
+            };
 
-          return !inline ? (
-            <div style={{ position: "relative" }}>
-              
-              {/* dynamic button */}
-              <button
-                onClick={handleCopy}
+            return !inline ? (
+              <div style={{ position: "relative" }}>
+                {/* dynamic button */}
+                <button
+                  onClick={handleCopy}
+                  style={{
+                    position: "absolute",
+                    right: "10px",
+                    top: "10px",
+                    fontSize: "12px",
+                    background: copied ? "#16a34a" : "#27272a",
+                    border: "none",
+                    padding: "4px 8px",
+                    borderRadius: "6px",
+                    cursor: "pointer",
+                    color: "white",
+                    transition: "0.2s",
+                  }}
+                >
+                  {copied ? "Copied ✓" : "Copy"}
+                </button>
+
+                <SyntaxHighlighter
+                  language={match?.[1] || "javascript"}
+                  style={vscDarkPlus}
+                  customStyle={{
+                    borderRadius: "10px",
+                    fontSize: "13px",
+                    paddingTop: "30px",
+                  }}
+                >
+                  {code}
+                </SyntaxHighlighter>
+              </div>
+            ) : (
+              <code
                 style={{
-                  position: "absolute",
-                  right: "10px",
-                  top: "10px",
-                  fontSize: "12px",
-                  background: copied ? "#16a34a" : "#27272a",
-                  border: "none",
-                  padding: "4px 8px",
+                  background: "#27272a",
+                  padding: "2px 6px",
                   borderRadius: "6px",
-                  cursor: "pointer",
-                  color: "white",
-                  transition: "0.2s",
                 }}
               >
-                {copied ? "Copied ✓" : "Copy"} 
-              </button>
-
-              <SyntaxHighlighter
-                language={match?.[1] || "javascript"}
-                style={vscDarkPlus}
-                customStyle={{
-                  borderRadius: "10px",
-                  fontSize: "13px",
-                  paddingTop: "30px",
-                }}
-              >
-                {code}
-              </SyntaxHighlighter>
-            </div>
-          ) : (
-            <code
-              style={{
-                background: "#27272a",
-                padding: "2px 6px",
-                borderRadius: "6px",
-              }}
-            >
-              {children}
-            </code>
-          );
-        },
-      }}
-    >
-      {text}
-    </ReactMarkdown>
-  );
-}
+                {children}
+              </code>
+            );
+          },
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+    );
+  }
 
   const sendMessage = async () => {
     if (!question.trim()) return;
@@ -158,12 +157,12 @@ function App() {
         type: "bot",
         text: res.data.answer,
         sources: res.data.sources || [],
+        usedWeb: res.data.usedWeb || false,
       };
 
       setMessages((prev) => [...prev, botMsg]);
       setQuestion("");
     } catch (err) {
-      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -181,7 +180,6 @@ function App() {
 
       alert("Repo ingested successfully!");
     } catch (err) {
-      console.error(err);
       alert("Error ingesting repo");
     } finally {
       setIngesting(false);
@@ -215,11 +213,22 @@ function App() {
             style={{
               ...styles.message,
               alignSelf: msg.type === "user" ? "flex-end" : "flex-start",
-              background:
-                msg.type === "user" ? "#2563eb" : "#18181b", 
+              background: msg.type === "user" ? "#2563eb" : "#18181b",
             }}
           >
             <div>{renderMessage(msg.text)}</div>
+
+            {msg.usedWeb && (
+              <div
+                style={{
+                  fontSize: "11px",
+                  color: "#60a5fa",
+                  marginBottom: "6px",
+                }}
+              >
+                🌐 Web Search Used
+              </div>
+            )}
 
             {msg.sources && msg.sources.length > 0 && (
               <div style={styles.sources}>
@@ -231,7 +240,7 @@ function App() {
                       href={src.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      style={styles.link} 
+                      style={styles.link}
                     >
                       {src.name}
                     </a>
@@ -243,10 +252,10 @@ function App() {
         ))}
 
         {loading && (
-  <div style={styles.loading}>
-    Thinking<span className="dots">...</span> {/* ✨ NEW */}
-  </div>
-)}
+          <div style={styles.loading}>
+            Thinking<span className="dots">...</span> {/* ✨ NEW */}
+          </div>
+        )}
 
         <div ref={chatEndRef} />
       </div>
@@ -265,8 +274,8 @@ function App() {
           onClick={sendMessage}
           style={styles.button}
           disabled={loading}
-          onMouseOver={(e) => (e.target.style.opacity = 0.85)} 
-  onMouseOut={(e) => (e.target.style.opacity = 1)}
+          onMouseOver={(e) => (e.target.style.opacity = 0.85)}
+          onMouseOut={(e) => (e.target.style.opacity = 1)}
         >
           Send
         </button>
@@ -277,9 +286,9 @@ function App() {
 
 const styles = {
   container: {
-    width: "600px", 
+    width: "600px",
     margin: "20px auto",
-    fontFamily: "Inter, sans-serif", 
+    fontFamily: "Inter, sans-serif",
     color: "white",
   },
 
@@ -300,15 +309,15 @@ const styles = {
     display: "flex",
     flexDirection: "column",
     gap: "12px",
-    border: "1px solid #27272a", 
+    border: "1px solid #27272a",
   },
 
   message: {
     padding: "12px 16px",
-    borderRadius: "14px", 
+    borderRadius: "14px",
     maxWidth: "75%",
     fontSize: "14px",
-    boxShadow: "0 2px 8px rgba(0,0,0,0.3)", 
+    boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
   },
 
   inputArea: {
@@ -322,7 +331,7 @@ const styles = {
     padding: "12px",
     borderRadius: "10px",
     border: "1px solid #27272a",
-    background: "#18181b", 
+    background: "#18181b",
     color: "white",
     outline: "none",
   },
@@ -334,7 +343,7 @@ const styles = {
     cursor: "pointer",
     background: "#2563eb",
     color: "white",
-    transition: "0.2s", 
+    transition: "0.2s",
   },
 
   sources: {
@@ -348,7 +357,7 @@ const styles = {
   },
 
   link: {
-    color: "#60a5fa", 
+    color: "#60a5fa",
     textDecoration: "none",
   },
 
