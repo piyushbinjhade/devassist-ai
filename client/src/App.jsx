@@ -75,52 +75,8 @@ function App() {
             const match = /language-(\w+)/.exec(className || "");
             const code = String(children).replace(/\n$/, "");
 
-            // local state inside component
-            const [copied, setCopied] = useState(false);
-
-            const handleCopy = () => {
-              navigator.clipboard.writeText(code);
-              setCopied(true);
-
-              setTimeout(() => {
-                setCopied(false);
-              }, 1500);
-            };
-
             return !inline ? (
-              <div style={{ position: "relative" }}>
-                {/* dynamic button */}
-                <button
-                  onClick={handleCopy}
-                  style={{
-                    position: "absolute",
-                    right: "10px",
-                    top: "10px",
-                    fontSize: "12px",
-                    background: copied ? "#16a34a" : "#27272a",
-                    border: "none",
-                    padding: "4px 8px",
-                    borderRadius: "6px",
-                    cursor: "pointer",
-                    color: "white",
-                    transition: "0.2s",
-                  }}
-                >
-                  {copied ? "Copied ✓" : "Copy"}
-                </button>
-
-                <SyntaxHighlighter
-                  language={match?.[1] || "javascript"}
-                  style={vscDarkPlus}
-                  customStyle={{
-                    borderRadius: "10px",
-                    fontSize: "13px",
-                    paddingTop: "30px",
-                  }}
-                >
-                  {code}
-                </SyntaxHighlighter>
-              </div>
+              <CodeBlock code={code} language={match?.[1] || "javascript"} />
             ) : (
               <code
                 style={{
@@ -149,9 +105,12 @@ function App() {
     setMessages((prev) => [...prev, userMsg]);
 
     try {
-      const res = await axios.post("https://devassist-ai-6hkd.onrender.com/query", {
-        question,
-      });
+      const res = await axios.post(
+        "https://devassist-backend.onrender.com/query",
+        {
+          question,
+        },
+      );
 
       const botMsg = {
         type: "bot",
@@ -162,7 +121,8 @@ function App() {
 
       setMessages((prev) => [...prev, botMsg]);
       setQuestion("");
-    } catch (err) {
+    } catch {
+      alert("Error sending your question. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -179,7 +139,7 @@ function App() {
       });
 
       alert("Repo ingested successfully!");
-    } catch (err) {
+    } catch {
       alert("Error ingesting repo");
     } finally {
       setIngesting(false);
