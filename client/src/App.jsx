@@ -5,6 +5,8 @@ import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+const API_BASE = "https://devassist-backend.onrender.com";
+
 function CodeBlock({ code, language }) {
   const [copied, setCopied] = useState(false);
 
@@ -105,12 +107,9 @@ function App() {
     setMessages((prev) => [...prev, userMsg]);
 
     try {
-      const res = await axios.post(
-        "https://devassist-backend.onrender.com/query",
-        {
-          question,
-        },
-      );
+      const res = await axios.post(`${API_BASE}/query`, {
+        question,
+      });
 
       const botMsg = {
         type: "bot",
@@ -122,7 +121,10 @@ function App() {
       setMessages((prev) => [...prev, botMsg]);
       setQuestion("");
     } catch {
-      alert("Error sending your question. Please try again.");
+      alert(
+        err?.response?.data?.error ||
+          "Error sending your question. Please try again.",
+      );
     } finally {
       setLoading(false);
     }
@@ -134,13 +136,13 @@ function App() {
     setIngesting(true);
 
     try {
-      await axios.post("https://devassist-backend.onrender.com/ingest/github", {
+      await axios.post(`${API_BASE}/ingest/github`, {
         repoUrl,
       });
 
       alert("Repo ingested successfully!");
     } catch {
-      alert("Error ingesting repo");
+      alert(err?.response?.data?.error || "Error ingesting repo");
     } finally {
       setIngesting(false);
     }
@@ -227,7 +229,7 @@ function App() {
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-          placeholder="Ask about your repo..."
+          placeholder="Ask a question..."
           style={styles.input}
         />
         <button
