@@ -5,7 +5,7 @@ import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-const API_BASE = "https://devassist-backend.onrender.com";
+const API_BASE = "https://devassist-backend.onrender.com/api";
 
 function CodeBlock({ code, language }) {
   const [copied, setCopied] = useState(false);
@@ -120,7 +120,7 @@ function App() {
 
       setMessages((prev) => [...prev, botMsg]);
       setQuestion("");
-    } catch {
+    } catch (err) {
       alert(
         err?.response?.data?.error ||
           "Error sending your question. Please try again.",
@@ -141,7 +141,7 @@ function App() {
       });
 
       alert("Repo ingested successfully!");
-    } catch {
+    } catch (err) {
       alert(err?.response?.data?.error || "Error ingesting repo");
     } finally {
       setIngesting(false);
