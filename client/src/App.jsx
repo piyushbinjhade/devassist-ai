@@ -72,10 +72,11 @@ function App() {
     return (
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeRaw]} 
         components={{
           code({ inline, className, children }) {
             const match = /language-(\w+)/.exec(className || "");
-            const code = String(children).replace(/\n$/, "");
+            const code = String(children).replace(/\n$/, "").trim();
 
             return !inline ? (
               <CodeBlock code={code} language={match?.[1] || "javascript"} />
