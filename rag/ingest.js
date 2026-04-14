@@ -10,14 +10,22 @@ async function loadModel() {
 }
 
 export async function getEmbedding(text) {
-  await loadModel();
+  try {
+    await loadModel();
+    console.log("Model loaded, generating embedding for text length:", text.length);
 
-  const output = await extractor(text, {
-    pooling: "mean",
-    normalize: true,
-  });
+    const output = await extractor(text, {
+      pooling: "mean",
+      normalize: true,
+    });
 
-  return Array.from(output.data);
+    const embedding = Array.from(output.data);
+    console.log("Generated embedding, length:", embedding.length);
+    return embedding;
+  } catch (err) {
+    console.error("Embedding generation failed:", err.message);
+    throw err;
+  }
 }
 
 function chunkText(text, size = 300) {
@@ -72,14 +80,16 @@ export async function fetchGitHubRepo(repoUrl) {
 
     for (let file of selectedFiles) {
       try {
-        console.log(`Downloading: ${file.name}`);
+        console.log(`Downloading: ${file.name}, size: ${file.size} bytes`);
         const fileHeaders = {};
         if (process.env.GITHUB_TOKEN) {
           fileHeaders.Authorization = `token ${process.env.GITHUB_TOKEN}`;
         }
         const fileData = await axios.get(file.download_url, { headers: fileHeaders });
 
+        console.log(`Downloaded ${file.name}, content length: ${fileData.data.length}`);
         const chunks = chunkText(fileData.data, 300);
+        console.log(`Created ${chunks.length} chunks for ${file.name}`);
 
         for (let chunk of chunks) {
           contents.push({

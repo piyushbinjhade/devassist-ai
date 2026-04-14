@@ -257,6 +257,7 @@ app.post("/ingest/github", async (req, res) => {
     for (let file of files) {
       try {
         if (!file?.text || file.text.trim().length === 0) {
+          console.log("⏭ Skipping empty text:", file.file);
           continue;
         }
 
@@ -267,15 +268,16 @@ app.post("/ingest/github", async (req, res) => {
           file.file.includes("lock") ||
           file.file.includes("package")
         ) {
+          console.log("⏭ Skipping useless file:", file.file);
           continue;
         }
 
         const safeText = file.text.slice(0, 1000);
-        console.log("Processing:", file.file, "length:", safeText.length);
+        console.log("Processing:", file.file, "original length:", file.text.length, "safe length:", safeText.length);
 
         // skip too small text
         if (!safeText || safeText.trim().length < 50) {
-          console.log("⏭ Skipping small/empty file:", file.file);
+          console.log("⏭ Skipping small/empty file:", file.file, "trimmed length:", safeText.trim().length);
           continue;
         }
 
@@ -284,7 +286,7 @@ app.post("/ingest/github", async (req, res) => {
         try {
           embedding = await getEmbedding(safeText);
         } catch (err) {
-          console.log("⏭ Embedding failed:", file.file);
+          console.log("⏭ Embedding failed for:", file.file, "error:", err.message);
           continue;
         }
 
@@ -297,7 +299,7 @@ app.post("/ingest/github", async (req, res) => {
             (v) => typeof v !== "number" || isNaN(v) || !isFinite(v),
           )
         ) {
-          console.log("⏭ Skipping invalid embedding:", file.file);
+          console.log("⏭ Skipping invalid embedding:", file.file, "type:", typeof embedding, "length:", embedding?.length, "isArray:", Array.isArray(embedding));
           continue;
         }
 
@@ -333,7 +335,9 @@ app.post("/ingest/github", async (req, res) => {
             namespace: "devassist",
           });
           validRecords++;
+          console.log("✅ Stored chunk for:", file.file);
         } catch (err) {
+          console.log("⏭ Upsert failed for:", file.file, "error:", err.message);
           continue;
         }
       } catch (err) {
