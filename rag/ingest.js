@@ -107,7 +107,10 @@ export async function fetchGitHubRepo(repoUrl) {
     for (let file of selectedFiles) {
       try {
         console.log(`Downloading: ${file.path || file.name}, size: ${file.size} bytes`);
-        const fileHeaders = {};
+        const fileHeaders = {
+          Accept: "application/vnd.github.v3.raw",
+          "User-Agent": "devassist-ai",
+        };
         if (process.env.GITHUB_TOKEN) {
           fileHeaders.Authorization = `token ${process.env.GITHUB_TOKEN}`;
         }
