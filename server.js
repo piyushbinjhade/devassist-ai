@@ -241,11 +241,14 @@ app.post("/ingest/github", async (req, res) => {
   if (!repoUrl) return res.json({ message: "No repo URL provided" });
 
   try {
+    console.log("Starting ingestion for:", repoUrl);
     const files = (await fetchGitHubRepo(repoUrl)).slice(0, 20);
 
     if (!files.length) {
       return res.status(400).json({ error: "No files fetched" });
     }
+
+    console.log(`Fetched ${files.length} file chunks`);
 
     for (let file of files) {
       try {
@@ -320,7 +323,8 @@ app.post("/ingest/github", async (req, res) => {
 
     res.json({ message: "Ingestion complete" });
   } catch (err) {
-    res.status(500).json({ error: "Ingestion failed" });
+    console.error("Ingestion failed:", err.message, err.stack);
+    res.status(500).json({ error: "Ingestion failed", details: err.message });
   }
 });
 
