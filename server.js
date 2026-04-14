@@ -248,6 +248,13 @@ app.post("/ingest/github", async (req, res) => {
     const files = (await fetchGitHubRepo(repoUrl)).slice(0, 20);
 
     let validRecords = 0;
+    let skippedEmpty = 0;
+    let skippedUseless = 0;
+    let skippedSmall = 0;
+    let embeddingFailed = 0;
+    let invalidEmbedding = 0;
+    let upsertFailed = 0;
+
     if (!files.length) {
       return res.status(400).json({ error: "No files fetched" });
     }
@@ -257,6 +264,7 @@ app.post("/ingest/github", async (req, res) => {
     for (let file of files) {
       try {
         if (!file?.text || file.text.trim().length === 0) {
+          skippedEmpty++;
           console.log("⏭ Skipping empty text:", file.file);
           continue;
         }
@@ -268,6 +276,7 @@ app.post("/ingest/github", async (req, res) => {
           file.file.includes("lock") ||
           file.file.includes("package")
         ) {
+          skippedUseless++;
           console.log("⏭ Skipping useless file:", file.file);
           continue;
         }
@@ -277,6 +286,7 @@ app.post("/ingest/github", async (req, res) => {
 
         // skip too small text
         if (!safeText || safeText.trim().length < 50) {
+          skippedSmall++;
           console.log("⏭ Skipping small/empty file:", file.file, "trimmed length:", safeText.trim().length);
           continue;
         }
@@ -286,6 +296,7 @@ app.post("/ingest/github", async (req, res) => {
         try {
           embedding = await getEmbedding(safeText);
         } catch (err) {
+          embeddingFailed++;
           console.log("⏭ Embedding failed for:", file.file, "error:", err.message);
           continue;
         }
@@ -299,6 +310,7 @@ app.post("/ingest/github", async (req, res) => {
             (v) => typeof v !== "number" || isNaN(v) || !isFinite(v),
           )
         ) {
+          invalidEmbedding++;
           console.log("⏭ Skipping invalid embedding:", file.file, "type:", typeof embedding, "length:", embedding?.length, "isArray:", Array.isArray(embedding));
           continue;
         }
@@ -337,6 +349,7 @@ app.post("/ingest/github", async (req, res) => {
           validRecords++;
           console.log("✅ Stored chunk for:", file.file);
         } catch (err) {
+          upsertFailed++;
           console.log("⏭ Upsert failed for:", file.file, "error:", err.message);
           continue;
         }
@@ -348,6 +361,15 @@ app.post("/ingest/github", async (req, res) => {
     if (validRecords === 0) {
       return res.status(400).json({
         error: "No valid code chunks found to store",
+        details: {
+          filesFetched: files.length,
+          skippedEmpty,
+          skippedUseless,
+          skippedSmall,
+          embeddingFailed,
+          invalidEmbedding,
+          upsertFailed,
+        },
       });
     }
     res.json({ message: "Ingestion complete", stored: validRecords });

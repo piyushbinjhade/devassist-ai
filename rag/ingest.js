@@ -55,51 +55,82 @@ export async function fetchGitHubRepo(repoUrl) {
     }
 
     console.log(`Fetching repo: ${owner}/${repo}`);
-    const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents`;
 
     const headers = {};
     if (process.env.GITHUB_TOKEN) {
       headers.Authorization = `token ${process.env.GITHUB_TOKEN}`;
     }
 
-    const response = await axios.get(apiUrl, { headers });
+    const allowedExtensions = [".js", ".ts", ".jsx", ".tsx"];
+    const MAX_FILES = 20;
+    const MAX_DEPTH = 3;
 
-    const files = response.data.filter(
-      (file) =>
-        file.type === "file" &&
-        file.download_url &&
-        (file.name === "README.md" ||
-          file.name.endsWith(".js") ||
-          file.name.endsWith(".ts")),
-    );
+    function isAllowedFile(name) {
+      return (
+        name === "README.md" ||
+        allowedExtensions.some((ext) => name.toLowerCase().endsWith(ext))
+      );
+    }
 
+    async function fetchDirectory(path = "", depth = 0, collected = []) {
+      if (collected.length >= MAX_FILES || depth > MAX_DEPTH) {
+        return collected;
+      }
+
+      const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents${path}`;
+      const response = await axios.get(apiUrl, { headers });
+
+      for (let item of response.data) {
+        if (collected.length >= MAX_FILES) break;
+
+        if (item.type === "file" && item.download_url && isAllowedFile(item.name)) {
+          collected.push(item);
+          continue;
+        }
+
+        if (item.type === "dir" && depth < MAX_DEPTH) {
+          await fetchDirectory(`${path}/${item.name}`, depth + 1, collected);
+        }
+      }
+
+      return collected;
+    }
+
+    const files = await fetchDirectory();
     console.log(`Found ${files.length} matching files`);
-    const selectedFiles = files.slice(0, 5);
+
+    const selectedFiles = files.slice(0, MAX_FILES);
+    console.log(`Selected ${selectedFiles.length} files for download`);
 
     let contents = [];
 
     for (let file of selectedFiles) {
       try {
-        console.log(`Downloading: ${file.name}, size: ${file.size} bytes`);
+        console.log(`Downloading: ${file.path || file.name}, size: ${file.size} bytes`);
         const fileHeaders = {};
         if (process.env.GITHUB_TOKEN) {
           fileHeaders.Authorization = `token ${process.env.GITHUB_TOKEN}`;
         }
         const fileData = await axios.get(file.download_url, { headers: fileHeaders });
 
-        console.log(`Downloaded ${file.name}, content length: ${fileData.data.length}`);
-        const chunks = chunkText(fileData.data, 300);
-        console.log(`Created ${chunks.length} chunks for ${file.name}`);
+        const rawText =
+          typeof fileData.data === "string"
+            ? fileData.data
+            : JSON.stringify(fileData.data);
+
+        console.log(`Downloaded ${file.path || file.name}, content length: ${rawText.length}`);
+        const chunks = chunkText(rawText, 300);
+        console.log(`Created ${chunks.length} chunks for ${file.path || file.name}`);
 
         for (let chunk of chunks) {
           contents.push({
-            file: file.name,
+            file: file.path || file.name,
             text: chunk,
             url: file.html_url,
           });
         }
       } catch (fileErr) {
-        console.error(`Failed to download ${file.name}:`, fileErr.message);
+        console.error(`Failed to download ${file.path || file.name}:`, fileErr.message);
         continue;
       }
     }
