@@ -15,9 +15,11 @@ const pc = new Pinecone({
 export const index = pc.index(process.env.PINECONE_INDEX);
 
 const app = express();
-app.use(cors({
-  origin: "*"
-}));
+app.use(
+  cors({
+    origin: "*",
+  }),
+);
 app.use(express.json());
 
 // cache models
@@ -172,7 +174,7 @@ Rules:
       selectedModel = cachedModels[0];
     }
 
-    const isLowConfidence = topScore < 0.75;
+    const isLowConfidence = topScore < 0.5;
 
     const isBadAnswer =
       answer.includes("Not enough information") || answer.trim().length < 30;
@@ -181,7 +183,7 @@ Rules:
     const noResults = results.length === 0;
 
     // better control over web search (only when truly needed)
-    if (noResults || isLowConfidence || isBadAnswer) {
+    if (noResults || (isLowConfidence && isBadAnswer && topScore < 0.4)) {
       usedWeb = true;
       const webResults = await tavilySearch(question);
 
@@ -230,6 +232,7 @@ ${question}
 
     res.json({ answer, sources, usedWeb });
   } catch (err) {
+    console.error("QUERY ERROR:", err?.message || err);
     res.status(500).json({ error: "Something went wrong" });
   }
 });
@@ -244,6 +247,7 @@ app.post("/ingest/github", async (req, res) => {
     console.log("Starting ingestion for:", repoUrl);
     const files = (await fetchGitHubRepo(repoUrl)).slice(0, 20);
 
+    let validRecords = 0;
     if (!files.length) {
       return res.status(400).json({ error: "No files fetched" });
     }
@@ -266,16 +270,25 @@ app.post("/ingest/github", async (req, res) => {
           continue;
         }
 
-        const safeText = file.text.slice(0, 1000); // 🔥 FIX
+        const safeText = file.text.slice(0, 1000);
+        console.log("Processing:", file.file, "length:", safeText.length);
 
         // skip too small text
-        if (safeText.length < 50) {
+        if (!safeText || safeText.trim().length < 50) {
+          console.log("⏭ Skipping small/empty file:", file.file);
           continue;
         }
 
-        const embedding = await getEmbedding(safeText);
+        // const embedding = await getEmbedding(safeText);
+        let embedding;
+        try {
+          embedding = await getEmbedding(safeText);
+        } catch (err) {
+          console.log("⏭ Embedding failed:", file.file);
+          continue;
+        }
 
-        // VALIDATION  
+        // VALIDATION
         if (
           !embedding ||
           !Array.isArray(embedding) ||
@@ -284,10 +297,16 @@ app.post("/ingest/github", async (req, res) => {
             (v) => typeof v !== "number" || isNaN(v) || !isFinite(v),
           )
         ) {
+          console.log("⏭ Skipping invalid embedding:", file.file);
           continue;
         }
 
-        // BUILD RECORD FIRST 
+        if (!embedding.length) {
+          console.log("⏭ Empty embedding skipped:", file.file);
+          continue;
+        }
+
+        // BUILD RECORD FIRST
         const record = {
           id: `${file.file}-${Date.now()}`,
           values: embedding,
@@ -313,6 +332,7 @@ app.post("/ingest/github", async (req, res) => {
           await index.upsert([record], {
             namespace: "devassist",
           });
+          validRecords++;
         } catch (err) {
           continue;
         }
@@ -321,10 +341,17 @@ app.post("/ingest/github", async (req, res) => {
       }
     }
 
-    res.json({ message: "Ingestion complete" });
+    if (validRecords === 0) {
+      return res.status(400).json({
+        error: "No valid code chunks found to store",
+      });
+    }
+    res.json({ message: "Ingestion complete", stored: validRecords });
   } catch (err) {
     console.error("Ingestion failed:", err.message, err.stack);
     res.status(500).json({ error: "Ingestion failed", details: err.message });
+    console.error("INGEST ERROR:", err?.message || err);
+    res.status(500).json({ error: "Ingestion failed" });
   }
 });
 
