@@ -350,8 +350,6 @@ app.post("/ingest/github", async (req, res) => {
   } catch (err) {
     console.error("Ingestion failed:", err.message, err.stack);
     res.status(500).json({ error: "Ingestion failed", details: err.message });
-    console.error("INGEST ERROR:", err?.message || err);
-    res.status(500).json({ error: "Ingestion failed" });
   }
 });
 

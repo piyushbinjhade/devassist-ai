@@ -49,7 +49,12 @@ export async function fetchGitHubRepo(repoUrl) {
     console.log(`Fetching repo: ${owner}/${repo}`);
     const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents`;
 
-    const response = await axios.get(apiUrl);
+    const headers = {};
+    if (process.env.GITHUB_TOKEN) {
+      headers.Authorization = `token ${process.env.GITHUB_TOKEN}`;
+    }
+
+    const response = await axios.get(apiUrl, { headers });
 
     const files = response.data.filter(
       (file) =>
@@ -68,7 +73,11 @@ export async function fetchGitHubRepo(repoUrl) {
     for (let file of selectedFiles) {
       try {
         console.log(`Downloading: ${file.name}`);
-        const fileData = await axios.get(file.download_url);
+        const fileHeaders = {};
+        if (process.env.GITHUB_TOKEN) {
+          fileHeaders.Authorization = `token ${process.env.GITHUB_TOKEN}`;
+        }
+        const fileData = await axios.get(file.download_url, { headers: fileHeaders });
 
         const chunks = chunkText(fileData.data, 300);
 
