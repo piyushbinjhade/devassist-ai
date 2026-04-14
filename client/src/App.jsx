@@ -5,7 +5,7 @@ import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-const API_BASE = "https://devassist-backend.onrender.com/api";
+const API_BASE = "https://devassist-ai-l5pl.onrender.com";
 
 function CodeBlock({ code, language }) {
   const [copied, setCopied] = useState(false);
