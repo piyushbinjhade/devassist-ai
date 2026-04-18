@@ -6,7 +6,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 
-const API_BASE = "https://devassist-ai-l5pl.onrender.com";
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3000";
 
 function CodeBlock({ code, language }) {
   const [copied, setCopied] = useState(false);
@@ -73,7 +73,7 @@ function App() {
     return (
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeRaw]} 
+        rehypePlugins={[rehypeRaw]}
         components={{
           code({ inline, className, children }) {
             const match = /language-(\w+)/.exec(className || "");
@@ -124,7 +124,8 @@ function App() {
       setQuestion("");
     } catch (err) {
       alert(
-        err?.response?.data?.error ||
+        err?.response?.data?.message ||
+          err?.response?.data?.error ||
           "Error sending your question. Please try again.",
       );
     } finally {
@@ -144,7 +145,11 @@ function App() {
 
       alert("Repo ingested successfully!");
     } catch (err) {
-      alert(err?.response?.data?.error || "Error ingesting repo");
+      alert(
+        err?.response?.data?.message ||
+          err?.response?.data?.error ||
+          "Error ingesting repo",
+      );
     } finally {
       setIngesting(false);
     }

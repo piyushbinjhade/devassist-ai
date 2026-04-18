@@ -27,16 +27,17 @@ A powerful RAG (Retrieval-Augmented Generation) based AI assistant designed spec
                        └─────────────────┘    └─────────────────┘
 ```
 
-## 🚀 Quick Start
+## � Quick Start
 
 ### Prerequisites
 
 - Node.js 18+
 - GitHub account (for repository access)
 - API keys for:
-  - [Pinecone](https://pinecone.io) (vector database)
+  - [Pinecone](https://pinecone.io) (vector database - must be **dense** index with 384 dimensions)
   - [Groq](https://groq.com) (LLM API)
   - [Tavily](https://tavily.com) (web search - optional)
+  - GitHub Personal Access Token (for higher rate limits)
 
 ### Installation
 
@@ -60,9 +61,9 @@ A powerful RAG (Retrieval-Augmented Generation) based AI assistant designed spec
 3. **Environment Setup**
    Create a `.env` file in the root directory:
    ```env
-   # Pinecone Configuration
+   # Pinecone Configuration (must be DENSE index with 384 dimensions)
    PINECONE_API_KEY=your_pinecone_api_key
-   PINECONE_INDEX=your_index_name
+   PINECONE_INDEX=your_dense_index_name
 
    # Groq API Configuration
    GROQ_API_KEY=your_groq_api_key
@@ -70,7 +71,12 @@ A powerful RAG (Retrieval-Augmented Generation) based AI assistant designed spec
 
    # Web Search (Optional)
    TAVILY_API_KEY=your_tavily_api_key
+
+   # GitHub Token (for higher rate limits)
+   GITHUB_TOKEN=ghp_your_github_token
    ```
+
+   **Important:** Your Pinecone index must be configured as **Dense** (not Sparse) with dimension 384 to work with the embedding model.
 
 4. **Start the application**
    ```bash
@@ -130,10 +136,11 @@ A powerful RAG (Retrieval-Augmented Generation) based AI assistant designed spec
 | Variable | Description | Required |
 |----------|-------------|----------|
 | `PINECONE_API_KEY` | Pinecone API key | Yes |
-| `PINECONE_INDEX` | Pinecone index name | Yes |
+| `PINECONE_INDEX` | Pinecone dense index name (384 dimensions) | Yes |
 | `GROQ_API_KEY` | Groq API key | Yes |
 | `USE_API` | Enable LLM API (set to "true") | Yes |
 | `TAVILY_API_KEY` | Tavily API key for web search | No |
+| `GITHUB_TOKEN` | GitHub Personal Access Token | Recommended |
 
 ### Pinecone Setup
 
@@ -141,7 +148,25 @@ A powerful RAG (Retrieval-Augmented Generation) based AI assistant designed spec
 2. Set dimension to 384 (for the embedding model used)
 3. Configure the index name in your `.env` file
 
-## 📁 Project Structure
+## � Deployment
+
+### Backend Deployment
+1. Deploy the server to a platform like Render, Railway, or Heroku
+2. Set all environment variables in your deployment platform
+3. Ensure the server runs on the correct port (uses `process.env.PORT || 3000`)
+
+### Frontend Deployment
+1. Build the client: `cd client && npm run build`
+2. Deploy the `client/dist` folder to Vercel, Netlify, or similar
+3. Set `VITE_API_BASE` environment variable to your backend URL (e.g., `https://your-backend.onrender.com`)
+
+### Client Environment Variables
+For the React client, create environment variables in your deployment platform:
+```env
+VITE_API_BASE=https://your-backend-url.com
+```
+
+## �📁 Project Structure
 
 ```
 devassist-ai/

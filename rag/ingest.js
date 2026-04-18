@@ -3,24 +3,32 @@ import axios from "axios";
 
 let extractor;
 
+// Load the embedding model locally
 async function loadModel() {
   if (!extractor) {
-    extractor = await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2");
+    try {
+      extractor = await pipeline(
+        "feature-extraction",
+        "Xenova/all-MiniLM-L6-v2",
+      );
+    } catch (err) {
+      console.error("Failed to load embedding model:", err.message);
+      throw err;
+    }
   }
 }
 
+// EMBEDDING - Using Local Transformers
 export async function getEmbedding(text) {
   try {
     await loadModel();
-    console.log("Model loaded, generating embedding for text length:", text.length);
 
     const output = await extractor(text, {
       pooling: "mean",
       normalize: true,
     });
 
-    const embedding = Array.from(output.data);
-    console.log("Generated embedding, length:", embedding.length);
+    let embedding = Array.from(output.data);
     return embedding;
   } catch (err) {
     console.error("Embedding generation failed:", err.message);
@@ -38,92 +46,145 @@ function chunkText(text, size = 300) {
 
 export async function fetchGitHubRepo(repoUrl) {
   try {
-    const cleaned = repoUrl.replace(".git", "").replace(/\/$/, "");
-    const parts = cleaned.split("/");
+    // STEP 1: URL PARSING
+    const cleaned = repoUrl.replace(".git", "").replace(/\/$/, "").trim();
 
-    if (parts.length < 5 || parts[2] !== "github.com") {
+    // Better URL validation - support multiple formats
+    let owner, repo;
+
+    if (cleaned.includes("github.com")) {
+      const parts = cleaned.split("/");
+      owner = parts[3];
+      repo = parts[4];
+    } else {
+      // Handle shorthand format "owner/repo"
+      const parts = cleaned.split("/");
+      if (parts.length === 2) {
+        owner = parts[0];
+        repo = parts[1];
+      }
+    }
+
+    if (!owner || !repo) {
       throw new Error(
-        "Invalid GitHub URL format. Expected: https://github.com/owner/repo",
+        `Invalid GitHub URL. Expected: https://github.com/owner/repo or owner/repo. Got: ${repoUrl}`,
       );
     }
 
-    const owner = parts[3];
-    const repo = parts[4];
+    console.log(`Ingesting: ${owner}/${repo}`);
 
-    if (!owner || !repo) {
-      throw new Error("Could not extract owner and repo from URL");
+    // STEP 2: GITHUB API HEADERS WITH RETRY
+    const getHeaders = () => ({
+      Authorization: process.env.GITHUB_TOKEN
+        ? `token ${process.env.GITHUB_TOKEN}`
+        : "",
+      "User-Agent": "devassist-ai",
+      Accept: "application/vnd.github.v3+json",
+    });
+
+    if (!process.env.GITHUB_TOKEN) {
+      console.warn("No GITHUB_TOKEN configured (60 req/hr limit)");
     }
 
-    console.log(`Fetching repo: ${owner}/${repo}`);
-
-    const headers = {};
-    if (process.env.GITHUB_TOKEN) {
-      headers.Authorization = `token ${process.env.GITHUB_TOKEN}`;
-    }
-
-    const allowedExtensions = [".js", ".ts", ".jsx", ".tsx"];
+    const allowedExtensions = [".js", ".ts", ".jsx", ".tsx", ".md"];
     const MAX_FILES = 20;
     const MAX_DEPTH = 3;
 
     function isAllowedFile(name) {
-      return (
-        name === "README.md" ||
-        allowedExtensions.some((ext) => name.toLowerCase().endsWith(ext))
-      );
+      return allowedExtensions.some((ext) => name.toLowerCase().endsWith(ext));
     }
 
+    // STEP 3: RECURSIVE DIRECTORY FETCH WITH ERROR HANDLING
     async function fetchDirectory(path = "", depth = 0, collected = []) {
-      if (collected.length >= MAX_FILES || depth > MAX_DEPTH) {
+      if (collected.length >= MAX_FILES || depth >= MAX_DEPTH) {
         return collected;
       }
 
       const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents${path}`;
-      const response = await axios.get(apiUrl, { headers });
 
-      for (let item of response.data) {
-        if (collected.length >= MAX_FILES) break;
+      try {
+        const response = await axios.get(apiUrl, {
+          headers: getHeaders(),
+          timeout: 5000, // 5 second timeout
+        });
 
-        if (item.type === "file" && item.download_url && isAllowedFile(item.name)) {
-          collected.push(item);
-          continue;
+        if (!response.data || !Array.isArray(response.data)) {
+          return collected;
         }
 
-        if (item.type === "dir" && depth < MAX_DEPTH) {
-          await fetchDirectory(`${path}/${item.name}`, depth + 1, collected);
+        for (let item of response.data) {
+          if (collected.length >= MAX_FILES) break;
+
+          if (
+            item.type === "file" &&
+            item.download_url &&
+            isAllowedFile(item.name)
+          ) {
+            collected.push(item);
+            continue;
+          }
+
+          if (item.type === "dir" && depth < MAX_DEPTH) {
+            await fetchDirectory(`${path}/${item.name}`, depth + 1, collected);
+          }
         }
+
+        return collected;
+      } catch (err) {
+        // Check for rate limit
+        if (err.response?.status === 403) {
+          console.error(`Rate limited (403) - Add GITHUB_TOKEN to .env`);
+        } else if (err.response?.status === 404) {
+          console.error(`Repository not found (404): ${owner}/${repo}`);
+        } else if (err.code === "ECONNABORTED") {
+          console.error(`Request timeout (5s) - GitHub API slow`);
+        } else {
+          console.error(`GitHub API error for ${path}:`, err.message);
+        }
+        // Return what we've collected so far instead of crashing
+        return collected;
       }
-
-      return collected;
     }
 
     const files = await fetchDirectory();
-    console.log(`Found ${files.length} matching files`);
+
+    if (!files || files.length === 0) {
+      throw new Error(
+        "No JavaScript/TypeScript files found in repository. " +
+          "Ensure repo is public and contains .js, .ts, .jsx, .tsx, or .md files.",
+      );
+    }
+
+    console.log(`Found ${files.length} files, downloading...`);
 
     const selectedFiles = files.slice(0, MAX_FILES);
-    console.log(`Selected ${selectedFiles.length} files for download`);
 
     let contents = [];
+    let downloadedCount = 0;
+    let failedCount = 0;
 
     for (let file of selectedFiles) {
       try {
-        console.log(`Downloading: ${file.path || file.name}, size: ${file.size} bytes`);
-        const fileHeaders = {
-          Accept: "application/vnd.github.v3.raw",
-          "User-Agent": "devassist-ai",
-        };
-        if (process.env.GITHUB_TOKEN) {
-          fileHeaders.Authorization = `token ${process.env.GITHUB_TOKEN}`;
-        }
-        const fileData = await axios.get(file.download_url, { headers: fileHeaders });
+        const fileHeaders = getHeaders();
+        fileHeaders.Accept = "application/vnd.github.v3.raw";
+
+        const fileData = await axios.get(file.download_url, {
+          headers: fileHeaders,
+          timeout: 5000,
+        });
 
         const rawText =
           typeof fileData.data === "string"
             ? fileData.data
             : JSON.stringify(fileData.data);
 
-        console.log(`Downloaded ${file.path || file.name}, content length: ${rawText.length}`);
+        // Skip empty files
+        if (!rawText || rawText.trim().length === 0) {
+          failedCount++;
+          continue;
+        }
+
         const chunks = chunkText(rawText, 300);
-        console.log(`Created ${chunks.length} chunks for ${file.path || file.name}`);
 
         for (let chunk of chunks) {
           contents.push({
@@ -132,16 +193,25 @@ export async function fetchGitHubRepo(repoUrl) {
             url: file.html_url,
           });
         }
+        downloadedCount++;
       } catch (fileErr) {
-        console.error(`Failed to download ${file.path || file.name}:`, fileErr.message);
+        failedCount++;
+        // Continue to next file instead of stopping
         continue;
       }
     }
 
-    console.log(`Processed ${contents.length} chunks`);
+    if (contents.length === 0) {
+      throw new Error(
+        `Failed to download any files. Checked ${selectedFiles.length} files, ` +
+          `downloaded ${downloadedCount}, got ${failedCount} errors. ` +
+          `Check GITHUB_TOKEN in .env`,
+      );
+    }
+
     return contents;
   } catch (err) {
-    console.error("Error in fetchGitHubRepo:", err.message);
+    console.error("Ingestion error:", err.message);
     throw err;
   }
 }
