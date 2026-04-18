@@ -63,6 +63,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [repoUrl, setRepoUrl] = useState("");
   const [ingesting, setIngesting] = useState(false);
+  const [ingestStatusMsg, setIngestStatusMsg] = useState("");
   const chatEndRef = useRef(null);
 
   useEffect(() => {
@@ -137,21 +138,55 @@ function App() {
     if (!repoUrl.trim()) return;
 
     setIngesting(true);
+    setIngestStatusMsg("Starting ingestion...");
 
     try {
-      await axios.post(`${API_BASE}/ingest/github`, {
+      const res = await axios.post(`${API_BASE}/ingest/github`, {
         repoUrl,
       });
 
-      alert("Repo ingested successfully!");
+      const jobId = res.data.jobId;
+      if (!jobId) {
+        alert("Repo ingested successfully!");
+        setIngesting(false);
+        setIngestStatusMsg("");
+        return;
+      }
+
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusRes = await axios.get(`${API_BASE}/ingest/status/${jobId}`);
+          const job = statusRes.data;
+
+          if (job.status === "processing") {
+            setIngestStatusMsg(job.progress || "Processing...");
+          } else if (job.status === "completed") {
+            clearInterval(pollInterval);
+            setIngesting(false);
+            setIngestStatusMsg("");
+            alert(`Repo ingested successfully!`);
+          } else if (job.status === "failed") {
+            clearInterval(pollInterval);
+            setIngesting(false);
+            setIngestStatusMsg("");
+            alert(`Error: ${job.error || "Failed to ingest"}\n${job.message || ""}`);
+          }
+        } catch (pollErr) {
+          clearInterval(pollInterval);
+          setIngesting(false);
+          setIngestStatusMsg("");
+          alert("Error checking ingestion status");
+        }
+      }, 2000);
+
     } catch (err) {
+      setIngesting(false);
+      setIngestStatusMsg("");
       alert(
         err?.response?.data?.message ||
           err?.response?.data?.error ||
           "Error ingesting repo",
       );
-    } finally {
-      setIngesting(false);
     }
   };
 
@@ -173,6 +208,11 @@ function App() {
           {ingesting ? "Loading..." : "Ingest"}
         </button>
       </div>
+      {ingesting && ingestStatusMsg && (
+        <div style={{ fontSize: "12px", color: "#a1a1aa", marginTop: "-8px", marginBottom: "12px", marginLeft: "4px" }}>
+          {ingestStatusMsg}
+        </div>
+      )}
 
       {/* Chat container */}
       <div style={styles.chat}>

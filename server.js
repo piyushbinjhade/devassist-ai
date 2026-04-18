@@ -237,7 +237,18 @@ ${question}
   }
 });
 
-// GITHUB INGEST - ERROR HANDLING
+// JOBS Tracker
+const jobs = new Map();
+
+app.get("/ingest/status/:jobId", (req, res) => {
+  const job = jobs.get(req.params.jobId);
+  if (!job) {
+    return res.status(404).json({ error: "Job not found" });
+  }
+  res.json(job);
+});
+
+// GITHUB INGEST - BACKGROUND PROCESSING
 app.post("/ingest/github", async (req, res) => {
   const { repoUrl } = req.body;
 
@@ -248,239 +259,157 @@ app.post("/ingest/github", async (req, res) => {
     });
   }
 
-  try {
-    console.log(`📨 Starting ingestion for: ${repoUrl}`);
+  const jobId = `job-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+  jobs.set(jobId, { status: "processing", progress: "Starting ingestion...", stored: 0 });
 
-    // FETCH REPO - Error messages
-    let files;
+  // Acknowledge immediately
+  res.status(202).json({
+    message: "Ingestion started in the background",
+    jobId,
+  });
+
+  // Run in background
+  (async () => {
     try {
-      files = await fetchGitHubRepo(repoUrl);
-    } catch (fetchErr) {
-      console.error(`❌ Failed to fetch repository: ${fetchErr.message}`);
+      console.log(`📨 [${jobId}] Starting async ingestion for: ${repoUrl}`);
 
-      // Return helpful error messages based on the type of failure
-      if (fetchErr.message.includes("Invalid GitHub URL")) {
-        return res.status(400).json({
-          error: "Invalid GitHub URL format",
-          message: fetchErr.message,
-          expected_format: "https://github.com/owner/repo or owner/repo",
+      // FETCH REPO - Error messages
+      let files;
+      try {
+        files = await fetchGitHubRepo(repoUrl);
+      } catch (fetchErr) {
+        console.error(`❌ [${jobId}] Failed to fetch repository: ${fetchErr.message}`);
+        jobs.set(jobId, {
+          status: "failed",
+          error: fetchErr.message,
+          hint: "Ensure the repo exists, is public, and is formatted correctly.",
         });
-      } else if (fetchErr.message.includes("not found")) {
-        return res.status(404).json({
-          error: "Repository not found",
-          message: fetchErr.message,
-          hint: "Ensure the repo exists and is public",
-        });
-      } else if (
-        fetchErr.message.includes("RATE LIMITED") ||
-        fetchErr.message.includes("403")
-      ) {
-        return res.status(429).json({
-          error: "GitHub API rate limited",
-          message: fetchErr.message,
-          hint: "Add GITHUB_TOKEN=ghp_... to your .env file for higher rate limits",
-        });
-      } else if (fetchErr.message.includes("No JavaScript")) {
-        return res.status(400).json({
-          error: "No supported files found",
-          message: fetchErr.message,
-          hint: "Repository must contain .js, .ts, .jsx, .tsx, or .md files",
-        });
-      } else {
-        return res.status(500).json({
-          error: "Failed to fetch repository",
-          message: fetchErr.message,
-          debug: fetchErr.stack,
-        });
+        return;
       }
-    }
 
-    if (!files || files.length === 0) {
-      return res.status(400).json({
-        error: "No files to ingest",
-        message: "fetchGitHubRepo returned empty array",
+      if (!files || files.length === 0) {
+        jobs.set(jobId, { status: "failed", error: "No files to ingest" });
+        return;
+      }
+
+      jobs.set(jobId, {
+        status: "processing",
+        progress: `Generating embeddings and storing...`,
+        totalChunks: files.length,
+        stored: 0
       });
-    }
 
-    console.log(
-      `Fetched ${files.length} file chunks, starting embedding & storage...`,
-    );
+      console.log(`[${jobId}] Fetched ${files.length} file chunks, starting embedding & storage...`);
 
-    let validRecords = 0;
-    let skippedEmpty = 0;
-    let skippedUseless = 0;
-    let skippedSmall = 0;
-    let embeddingFailed = 0;
-    let invalidEmbedding = 0;
-    let upsertFailed = 0;
+      let validRecords = 0;
+      let skippedEmpty = 0; let skippedUseless = 0; let skippedSmall = 0;
+      let embeddingFailed = 0; let invalidEmbedding = 0; let upsertFailed = 0;
 
-    // Collect all records first
-    const recordsToUpsert = [];
+      const recordsToUpsert = [];
 
-    for (let file of files) {
-      try {
-        if (!file?.text || file.text.trim().length === 0) {
-          skippedEmpty++;
-          continue;
-        }
+      // Filter out useless files early
+      const validFiles = files.filter((f) => {
+        if (!f?.text || f.text.trim().length === 0) { skippedEmpty++; return false; }
+        if (f.file.includes("node_modules") || f.file.includes(".lock")) { skippedUseless++; return false; }
+        if (f.text.trim().length < 20) { skippedSmall++; return false; }
+        return true;
+      });
 
-        // skip useless files (node_modules, lock files)
-        if (file.file.includes("node_modules") || file.file.includes(".lock")) {
-          skippedUseless++;
-          continue;
-        }
+      const EMBED_BATCH_SIZE = 25; // process 25 chunks per model call
+      for (let i = 0; i < validFiles.length; i += EMBED_BATCH_SIZE) {
+        await new Promise(r => setTimeout(r, 5)); // yield event loop
 
-        const safeText = file.text;
-        // skip too small text
-        if (!safeText || safeText.trim().length < 20) {
-          skippedSmall++;
-          continue;
-        }
+        const batchFiles = validFiles.slice(i, i + EMBED_BATCH_SIZE);
+        const texts = batchFiles.map(f => f.text);
 
-        // Get embedding with error handling
-        let embedding;
         try {
-          embedding = await getEmbedding(safeText);
+          const embeddingsArray = await getEmbedding(texts);
+          
+          for (let j = 0; j < batchFiles.length; j++) {
+            const file = batchFiles[j];
+            const embedding = embeddingsArray[j];
+
+            if (!embedding || !Array.isArray(embedding) || embedding.length !== 384 ||
+                embedding.some((v) => typeof v !== "number" || isNaN(v) || !isFinite(v))) {
+              invalidEmbedding++;
+              continue;
+            }
+
+            recordsToUpsert.push({
+              id: `${file.file}-${Date.now()}-${Math.random()}`,
+              values: embedding,
+              metadata: {
+                text: file.text,
+                source: file.file,
+                url: file.url,
+                type: "code",
+              },
+            });
+          }
         } catch (err) {
-          embeddingFailed++;
-          console.error(`Embedding failed for ${file.file}: ${err.message}`);
-          continue;
+           console.error(`[${jobId}] Embedding batch failed:`, err.message);
+           embeddingFailed += batchFiles.length;
         }
-
-        // VALIDATION: Check embedding is 384-dimensional with valid numbers
-        if (
-          !embedding ||
-          !Array.isArray(embedding) ||
-          embedding.length !== 384 ||
-          embedding.some(
-            (v) => typeof v !== "number" || isNaN(v) || !isFinite(v),
-          )
-        ) {
-          invalidEmbedding++;
-          console.warn(
-            `Invalid embedding for ${file.file} (length: ${embedding?.length})`,
-          );
-          continue;
-        }
-
-        // BUILD RECORD
-        const record = {
-          id: `${file.file}-${Date.now()}-${Math.random()}`,
-          values: embedding,
-          metadata: {
-            text: safeText,
-            source: file.file,
-            url: file.url,
-            type: "code",
-          },
-        };
-
-        recordsToUpsert.push(record);
-      } catch (err) {
-        console.error(
-          `Unexpected error processing ${file.file}:`,
-          err.message,
-        );
-        continue;
       }
-    }
 
-    console.log(`Ready to upsert: ${recordsToUpsert.length} records`);
+      console.log(`[${jobId}] Ready to upsert: ${recordsToUpsert.length} records`);
+      jobs.set(jobId, {
+        status: "processing",
+        progress: `Upserting ${recordsToUpsert.length} records to Pinecone...`,
+        totalChunks: files.length,
+        stored: 0
+      });
 
-    // BATCH UPSERT - Process in chunks of 50
-    const BATCH_SIZE = 50;
-    for (let i = 0; i < recordsToUpsert.length; i += BATCH_SIZE) {
-      const batch = recordsToUpsert.slice(i, i + BATCH_SIZE);
-      try {
-        console.log(
-          `Upserting batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(recordsToUpsert.length / BATCH_SIZE)} (${batch.length} records)...`,
-        );
+      const BATCH_SIZE = 50;
+      for (let i = 0; i < recordsToUpsert.length; i += BATCH_SIZE) {
+        // YIELD again during batching just in case
+        await new Promise(r => setTimeout(r, 5));
 
-        // Debug: Log first record structure
-        if (i === 0) {
-          const firstRecord = batch[0];
-          console.log(`First record in batch:`, {
-            idType: typeof firstRecord.id,
-            idLength: firstRecord.id?.length,
-            valuesArrayType: Array.isArray(firstRecord.values),
-            valuesLength: firstRecord.values?.length,
-            first3Values: firstRecord.values?.slice(0, 3),
-            metadataKeys: Object.keys(firstRecord.metadata || {}),
+        const batch = recordsToUpsert.slice(i, i + BATCH_SIZE);
+        try {
+          await index.upsert({
+            records: batch,
+            namespace: "devassist",
           });
-        }
-
-        const upsertResult = await index.upsert({
-          records: batch,
-          namespace: "devassist",
-        });
-
-        console.log(`Batch upsert succeeded:`, upsertResult);
-        validRecords += batch.length;
-        console.log(
-          `Total stored so far: ${validRecords}/${recordsToUpsert.length}`,
-        );
-      } catch (err) {
-        upsertFailed += batch.length;
-        console.error(`\n BATCH UPSERT FAILED (${batch.length} records):`);
-        console.error(`   Message: ${err.message}`);
-        console.error(`   Code: ${err.code}`);
-        console.error(`   Status: ${err.status}`);
-        console.error(`   Full Error: ${err.toString()}`);
-        if (err.response?.data) {
-          console.error(
-            `   Response Data: ${JSON.stringify(err.response.data)}`,
-          );
+          validRecords += batch.length;
+          jobs.set(jobId, {
+            status: "processing",
+            progress: `Upserted ${validRecords} / ${recordsToUpsert.length} records...`,
+            totalChunks: files.length,
+            stored: validRecords
+          });
+        } catch (err) {
+          upsertFailed += batch.length;
+          console.error(`\n[${jobId}] BATCH UPSERT FAILED (${batch.length} records):`, err.message);
         }
       }
-    }
 
-    // FINAL RESPONSE
-    if (validRecords === 0) {
-      return res.status(400).json({
-        error: "No valid code chunks stored",
-        message: `Failed to store any of the ${recordsToUpsert.length} processed records to Pinecone. Check your API key and index configuration.`,
-        details: {
-          totalChunks: files.length,
-          processedRecords: recordsToUpsert.length,
-          skippedEmpty,
-          skippedUseless,
-          skippedSmall,
-          embeddingFailed,
-          invalidEmbedding,
+      if (validRecords === 0) {
+        jobs.set(jobId, { status: "failed", error: "Failed to store valid code chunks. Check Pinecone index.", stored: 0 });
+        return;
+      }
+
+      console.log(`\n[${jobId}] Ingestion complete: ${validRecords} chunks stored`);
+      jobs.set(jobId, {
+        status: "completed",
+        message: "Ingestion successful",
+        stored: validRecords,
+        stats: {
+          totalChunks: files.length, processedRecords: recordsToUpsert.length, validRecords,
+          skipped: { empty: skippedEmpty, useless: skippedUseless, small: skippedSmall, embeddingFailed, invalidEmbedding },
           upsertFailed,
         },
-        hint: "Verify PINECONE_API_KEY and PINECONE_INDEX in .env",
+      });
+
+    } catch (err) {
+      console.error(`\n[${jobId}] CRITICAL INGESTION ERROR:`, err.message);
+      jobs.set(jobId, {
+        status: "failed",
+        error: "Critical ingestion failure",
+        message: err.message,
       });
     }
-
-    console.log(`\n Ingestion complete: ${validRecords} chunks stored`);
-
-    res.status(200).json({
-      message: "Ingestion successful",
-      stored: validRecords,
-      stats: {
-        totalChunks: files.length,
-        processedRecords: recordsToUpsert.length,
-        validRecords,
-        skipped: {
-          empty: skippedEmpty,
-          useless: skippedUseless,
-          small: skippedSmall,
-          embeddingFailed,
-          invalidEmbedding,
-        },
-        upsertFailed,
-      },
-    });
-  } catch (err) {
-    console.error("\n CRITICAL INGESTION ERROR:", err.message);
-    console.error(err.stack);
-    res.status(500).json({
-      error: "Ingestion failed",
-      message: err.message,
-      debug: process.env.NODE_ENV === "development" ? err.stack : undefined,
-    });
-  }
+  })();
 });
 
 // Health check

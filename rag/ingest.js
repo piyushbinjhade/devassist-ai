@@ -28,6 +28,10 @@ export async function getEmbedding(text) {
       normalize: true,
     });
 
+    if (Array.isArray(text)) {
+      return output.tolist();
+    }
+
     let embedding = Array.from(output.data);
     return embedding;
   } catch (err) {
@@ -163,7 +167,7 @@ export async function fetchGitHubRepo(repoUrl) {
     let downloadedCount = 0;
     let failedCount = 0;
 
-    for (let file of selectedFiles) {
+    const downloadPromises = selectedFiles.map(async (file) => {
       try {
         const fileHeaders = getHeaders();
         fileHeaders.Accept = "application/vnd.github.v3.raw";
@@ -180,24 +184,30 @@ export async function fetchGitHubRepo(repoUrl) {
 
         // Skip empty files
         if (!rawText || rawText.trim().length === 0) {
-          failedCount++;
-          continue;
+          return { success: false };
         }
 
         const chunks = chunkText(rawText, 300);
+        const mappedChunks = chunks.map((chunk) => ({
+          file: file.path || file.name,
+          text: chunk,
+          url: file.html_url,
+        }));
 
-        for (let chunk of chunks) {
-          contents.push({
-            file: file.path || file.name,
-            text: chunk,
-            url: file.html_url,
-          });
-        }
-        downloadedCount++;
+        return { success: true, chunks: mappedChunks };
       } catch (fileErr) {
+        return { success: false };
+      }
+    });
+
+    const results = await Promise.all(downloadPromises);
+
+    for (const res of results) {
+      if (res.success) {
+        downloadedCount++;
+        contents.push(...res.chunks);
+      } else {
         failedCount++;
-        // Continue to next file instead of stopping
-        continue;
       }
     }
 
