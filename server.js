@@ -85,7 +85,7 @@ app.post("/query", async (req, res) => {
     const context = results
       .map(
         (r) =>
-          `[Source: ${r.metadata.source}]\n${r.metadata.text.slice(0, 200)}`, // 🔥 reduced size
+          `[Source: ${r.metadata.source}]\n${r.metadata.text.slice(0, 200)}`,
       )
       .join("\n\n");
 
@@ -278,7 +278,7 @@ app.post("/ingest/github", async (req, res) => {
       try {
         files = await fetchGitHubRepo(repoUrl);
       } catch (fetchErr) {
-        console.error(`❌ [${jobId}] Failed to fetch repository: ${fetchErr.message}`);
+        console.error(`[${jobId}] Failed to fetch repository: ${fetchErr.message}`);
         jobs.set(jobId, {
           status: "failed",
           error: fetchErr.message,
@@ -294,7 +294,7 @@ app.post("/ingest/github", async (req, res) => {
 
       jobs.set(jobId, {
         status: "processing",
-        progress: `Generating embeddings and storing...`,
+        progress: `Generating embeddings...`,
         totalChunks: files.length,
         stored: 0
       });
@@ -355,7 +355,7 @@ app.post("/ingest/github", async (req, res) => {
       console.log(`[${jobId}] Ready to upsert: ${recordsToUpsert.length} records`);
       jobs.set(jobId, {
         status: "processing",
-        progress: `Upserting ${recordsToUpsert.length} records to Pinecone...`,
+        progress: `Saving to database...`,
         totalChunks: files.length,
         stored: 0
       });
@@ -374,7 +374,7 @@ app.post("/ingest/github", async (req, res) => {
           validRecords += batch.length;
           jobs.set(jobId, {
             status: "processing",
-            progress: `Upserted ${validRecords} / ${recordsToUpsert.length} records...`,
+            progress: `Synchronizing records...`,
             totalChunks: files.length,
             stored: validRecords
           });
