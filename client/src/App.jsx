@@ -82,9 +82,12 @@ function App() {
   const ingesting = ingestingMap[activeChatId] || false;
   const ingestStatusMsg = ingestStatusMap[activeChatId] || "";
 
-  const setLoading = (val, id = activeChatId) => setLoadingMap(prev => ({ ...prev, [id]: val }));
-  const setIngesting = (val, id = activeChatId) => setIngestingMap(prev => ({ ...prev, [id]: val }));
-  const setIngestStatusMsg = (val, id = activeChatId) => setIngestStatusMap(prev => ({ ...prev, [id]: val }));
+  const setLoading = (val, id = activeChatId) =>
+    setLoadingMap((prev) => ({ ...prev, [id]: val }));
+  const setIngesting = (val, id = activeChatId) =>
+    setIngestingMap((prev) => ({ ...prev, [id]: val }));
+  const setIngestStatusMsg = (val, id = activeChatId) =>
+    setIngestStatusMap((prev) => ({ ...prev, [id]: val }));
   const chatEndRef = useRef(null);
 
   // Sync to localStorage
@@ -92,7 +95,7 @@ function App() {
     localStorage.setItem("devassist_chats", JSON.stringify(chats));
   }, [chats]);
 
-  const currentChat = chats.find(c => c.id === activeChatId) || chats[0];
+  const currentChat = chats.find((c) => c.id === activeChatId) || chats[0];
   const messages = currentChat?.messages || [];
 
   useEffect(() => {
@@ -100,16 +103,24 @@ function App() {
   }, [messages, loading]);
 
   const createNewChat = () => {
-    const newChat = { id: Date.now().toString(), title: "New Chat", messages: [] };
-    setChats(prev => [newChat, ...prev]);
+    const newChat = {
+      id: Date.now().toString(),
+      title: "New Chat",
+      messages: [],
+    };
+    setChats((prev) => [newChat, ...prev]);
     setActiveChatId(newChat.id);
   };
 
   const deleteChat = (id, e) => {
     e.stopPropagation();
-    const newChats = chats.filter(c => c.id !== id);
+    const newChats = chats.filter((c) => c.id !== id);
     if (newChats.length === 0) {
-      const fallback = { id: Date.now().toString(), title: "New Chat", messages: [] };
+      const fallback = {
+        id: Date.now().toString(),
+        title: "New Chat",
+        messages: [],
+      };
       setChats([fallback]);
       setActiveChatId(fallback.id);
     } else {
@@ -126,6 +137,7 @@ function App() {
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeRaw]}
         components={{
+          p: ({ children }) => <div>{children}</div>,
           code({ inline, className, children }) {
             const match = /language-(\w+)/.exec(className || "");
             const code = String(children).replace(/\n$/, "").trim();
@@ -158,17 +170,20 @@ function App() {
     setLoading(true, chatIdForReq);
 
     const userMsg = { type: "user", text: question };
-    
+
     let updatedTitle = currentChat.title;
     if (currentChat.messages.length === 0) {
-      updatedTitle = question.slice(0, 25) + (question.length > 25 ? "..." : "");
+      updatedTitle =
+        question.slice(0, 25) + (question.length > 25 ? "..." : "");
     }
 
-    setChats((prev) => prev.map(c => 
-      c.id === chatIdForReq 
-        ? { ...c, title: updatedTitle, messages: [...c.messages, userMsg] } 
-        : c
-    ));
+    setChats((prev) =>
+      prev.map((c) =>
+        c.id === chatIdForReq
+          ? { ...c, title: updatedTitle, messages: [...c.messages, userMsg] }
+          : c,
+      ),
+    );
 
     const currentQuestion = question;
     setQuestion("");
@@ -183,13 +198,16 @@ function App() {
         text: res.data.answer,
         sources: res.data.sources || [],
         usedWeb: res.data.usedWeb || false,
+        metrics: res.data.metrics || null,
       };
 
-      setChats((prev) => prev.map(c => 
-        c.id === chatIdForReq 
-          ? { ...c, messages: [...c.messages, botMsg] } 
-          : c
-      ));
+      setChats((prev) =>
+        prev.map((c) =>
+          c.id === chatIdForReq
+            ? { ...c, messages: [...c.messages, botMsg] }
+            : c,
+        ),
+      );
     } catch (err) {
       alert(
         err?.response?.data?.message ||
@@ -223,7 +241,9 @@ function App() {
 
       const pollInterval = setInterval(async () => {
         try {
-          const statusRes = await axios.get(`${API_BASE}/ingest/status/${jobId}`);
+          const statusRes = await axios.get(
+            `${API_BASE}/ingest/status/${jobId}`,
+          );
           const job = statusRes.data;
 
           if (job.status === "processing") {
@@ -237,7 +257,9 @@ function App() {
             clearInterval(pollInterval);
             setIngesting(false, chatIdForReq);
             setIngestStatusMsg("", chatIdForReq);
-            alert(`Error: ${job.error || "Failed to ingest"}\n${job.message || ""}`);
+            alert(
+              `Error: ${job.error || "Failed to ingest"}\n${job.message || ""}`,
+            );
           }
         } catch (pollErr) {
           clearInterval(pollInterval);
@@ -246,7 +268,6 @@ function App() {
           alert("Error checking ingestion status");
         }
       }, 2000);
-
     } catch (err) {
       setIngesting(false, chatIdForReq);
       setIngestStatusMsg("", chatIdForReq);
@@ -263,20 +284,23 @@ function App() {
       {/* Sidebar */}
       <div style={styles.sidebar}>
         <div style={styles.sidebarHeader}>DevAssist AI</div>
-        <button style={styles.newChatBtn} onClick={createNewChat}>+ New Chat</button>
+        <button style={styles.newChatBtn} onClick={createNewChat}>
+          + New Chat
+        </button>
         <div style={styles.chatList}>
-          {chats.map(chat => (
-            <div 
-              key={chat.id} 
+          {chats.map((chat) => (
+            <div
+              key={chat.id}
               style={{
                 ...styles.chatListItem,
-                backgroundColor: chat.id === activeChatId ? "#27272a" : "transparent"
+                backgroundColor:
+                  chat.id === activeChatId ? "#27272a" : "transparent",
               }}
               onClick={() => setActiveChatId(chat.id)}
             >
               <div style={styles.chatListTitle}>{chat.title}</div>
-              <button 
-                style={styles.deleteBtn} 
+              <button
+                style={styles.deleteBtn}
                 onClick={(e) => deleteChat(chat.id, e)}
                 title="Delete Chat"
               >
@@ -299,18 +323,30 @@ function App() {
               style={styles.repoInput}
               disabled={ingesting}
             />
-            <button style={styles.button} onClick={ingestRepo} disabled={ingesting}>
+            <button
+              style={styles.button}
+              onClick={ingestRepo}
+              disabled={ingesting}
+            >
               {ingesting ? "Loading..." : "Ingest"}
             </button>
           </div>
           {ingestStatusMsg && (
-            <div style={{ 
-              fontSize: "13px", 
-              fontWeight: ingestStatusMsg.includes("successfully") ? "600" : "normal",
-              color: ingestStatusMsg.includes("successfully") ? "#4ade80" : ingestStatusMsg.includes("Error") ? "#f87171" : "#a1a1aa", 
-              marginTop: "-8px", 
-              marginLeft: "4px" 
-            }}>
+            <div
+              style={{
+                fontSize: "13px",
+                fontWeight: ingestStatusMsg.includes("successfully")
+                  ? "600"
+                  : "normal",
+                color: ingestStatusMsg.includes("successfully")
+                  ? "#4ade80"
+                  : ingestStatusMsg.includes("Error")
+                    ? "#f87171"
+                    : "#a1a1aa",
+                marginTop: "-8px",
+                marginLeft: "4px",
+              }}
+            >
               {ingestStatusMsg.includes("successfully") && "✅ "}
               {ingestStatusMsg.includes("Error") && "❌ "}
               {ingestStatusMsg}
@@ -318,7 +354,7 @@ function App() {
           )}
         </div>
 
-        {/* Chat container */}
+        {/* Chat container  */}
         <div style={styles.chat}>
           {messages.map((msg, i) => (
             <div
@@ -340,6 +376,13 @@ function App() {
                   }}
                 >
                   🌐 Web Search Used
+                </div>
+              )}
+
+              {msg.metrics && (
+                <div className="text-xs text-gray-400 mt-2">
+                  ⚡ {msg.metrics.queryTime} | 🎯 {msg.metrics.topScore}
+                  {msg.metrics.usedWeb && " | 🌐 fallback"}
                 </div>
               )}
 
@@ -406,7 +449,7 @@ const styles = {
     fontFamily: "Inter, sans-serif",
     color: "white",
     background: "#000",
-    overflow: "hidden"
+    overflow: "hidden",
   },
 
   sidebar: {
@@ -422,7 +465,7 @@ const styles = {
     fontSize: "18px",
     fontWeight: "700",
     marginBottom: "20px",
-    color: "#e4e4e7"
+    color: "#e4e4e7",
   },
 
   newChatBtn: {
@@ -435,7 +478,7 @@ const styles = {
     cursor: "pointer",
     fontWeight: "500",
     marginBottom: "20px",
-    transition: "0.2s"
+    transition: "0.2s",
   },
 
   chatList: {
@@ -443,7 +486,7 @@ const styles = {
     overflowY: "auto",
     display: "flex",
     flexDirection: "column",
-    gap: "8px"
+    gap: "8px",
   },
 
   chatListItem: {
@@ -454,7 +497,7 @@ const styles = {
     borderRadius: "8px",
     cursor: "pointer",
     color: "#a1a1aa",
-    transition: "0.2s"
+    transition: "0.2s",
   },
 
   chatListTitle: {
@@ -462,7 +505,7 @@ const styles = {
     whiteSpace: "nowrap",
     overflow: "hidden",
     textOverflow: "ellipsis",
-    flex: 1
+    flex: 1,
   },
 
   deleteBtn: {
@@ -483,7 +526,7 @@ const styles = {
     maxWidth: "900px",
     margin: "0 auto",
     height: "100vh",
-    boxSizing: "border-box"
+    boxSizing: "border-box",
   },
 
   topArea: {
@@ -516,7 +559,7 @@ const styles = {
     flexDirection: "column",
     gap: "16px",
     border: "1px solid #27272a",
-    marginBottom: "16px"
+    marginBottom: "16px",
   },
 
   message: {
@@ -525,13 +568,13 @@ const styles = {
     maxWidth: "80%",
     fontSize: "15px",
     boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
-    lineHeight: "1.5"
+    lineHeight: "1.5",
   },
 
   inputArea: {
     display: "flex",
     gap: "10px",
-    paddingBottom: "20px"
+    paddingBottom: "20px",
   },
 
   chatInput: {
@@ -542,7 +585,7 @@ const styles = {
     background: "#18181b",
     color: "white",
     outline: "none",
-    fontSize: "15px"
+    fontSize: "15px",
   },
 
   button: {
@@ -564,7 +607,7 @@ const styles = {
 
   sourceItem: {
     marginLeft: "8px",
-    marginTop: "4px"
+    marginTop: "4px",
   },
 
   link: {
@@ -576,7 +619,7 @@ const styles = {
     fontSize: "14px",
     color: "#71717a",
     fontStyle: "italic",
-    padding: "10px"
+    padding: "10px",
   },
 };
 

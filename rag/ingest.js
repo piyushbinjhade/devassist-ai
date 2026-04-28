@@ -40,11 +40,23 @@ export async function getEmbedding(text) {
   }
 }
 
-function chunkText(text, size = 300) {
-  let chunks = [];
-  for (let i = 0; i < text.length; i += size) {
-    chunks.push(text.slice(i, i + size));
+//  CHUNKING
+function chunkText(text, chunkSize = 500, overlap = 100) {
+  const chunks = [];
+
+  let start = 0;
+
+  while (start < text.length) {
+    const end = start + chunkSize;
+
+    const chunk = text.slice(start, end);
+    chunks.push(chunk);
+
+    // move with overlap
+    start += chunkSize - overlap;
   }
+
+  console.log("Chunks created:", chunks.length);
   return chunks;
 }
 
@@ -187,7 +199,8 @@ export async function fetchGitHubRepo(repoUrl) {
           return { success: false };
         }
 
-        const chunks = chunkText(rawText, 300);
+        // const chunks = chunkText(rawText, 300);
+        const chunks = chunkText(rawText, 500, 100);
         const mappedChunks = chunks.map((chunk) => ({
           file: file.path || file.name,
           text: chunk,
