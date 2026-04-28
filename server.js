@@ -48,6 +48,7 @@ async function tavilySearch(query) {
 
 //  QUERY HANDLER
 app.post("/query", async (req, res) => {
+  const startTime = Date.now(); // START TIMER
   const { question } = req.body;
 
   if (!question) {
@@ -65,22 +66,21 @@ app.post("/query", async (req, res) => {
   }
 
   try {
-    const queryEmbedding = await getEmbedding(question);
+    const queryEmbeddingArr = await getEmbedding([question]);
+    const queryEmbedding = queryEmbeddingArr[0];
+    console.log("Query embedding length:", queryEmbedding.length);
 
     // faster retrieval
-    const queryResponse = await index.query(
-      {
-        vector: queryEmbedding,
-        topK: 2,
-        includeMetadata: true,
-      },
-      {
-        namespace: "devassist",
-      },
-    );
+    const queryResponse = await index.query({
+      vector: queryEmbedding,
+      topK: 2,
+      includeMetadata: true,
+      namespace: "devassist",
+    });
 
     const results = queryResponse.matches || [];
     const topScore = results[0]?.score || 0;
+    const resultCount = results.length; // METRIC
 
     const context = results
       .map(
@@ -131,15 +131,26 @@ Answer clearly and precisely:
                 {
                   role: "system",
                   content: `
-                          You are a RAG-based Developer Assistant AI.
+                          You are a senior developer assistant.
 
                           Rules:
-                          - Answer ONLY using provided context
-                          - If insufficient → say: "Not enough information"
-                          - Keep answers concise (max 4 lines)
-                          - Use bullet points if helpful
-                          - Explain simply (junior dev level)
-                          - Avoid repetition
+                          - Use ONLY the provided context
+                          - Keep answers clean and concise
+                          - DO NOT use bullet points (•)
+                          - Write in short, clear sentences
+                          - Avoid unnecessary formatting
+
+                          Format:
+                          <One-line explanation>
+
+                          How it works:
+                          Sentence 1.
+                          Sentence 2.
+                          Sentence 3.
+
+                          Why it matters:
+                          Sentence 1.
+                          Sentence 2.
                           `,
                 },
                 { role: "user", content: prompt },
@@ -230,7 +241,19 @@ ${question}
       timestamp: Date.now(),
     });
 
-    res.json({ answer, sources, usedWeb });
+    // res.json({ answer, sources, usedWeb });
+    const endTime = Date.now();
+
+    const metrics = {
+      queryTime: `${endTime - startTime}ms`,
+      topScore: topScore.toFixed(3),
+      resultCount,
+      usedWeb,
+    };
+
+    console.log("📊 QUERY METRICS:", metrics);
+
+    res.json({ answer, sources, usedWeb, metrics });
   } catch (err) {
     console.error("QUERY ERROR:", err?.message || err);
     res.status(500).json({ error: "Something went wrong" });
@@ -260,7 +283,11 @@ app.post("/ingest/github", async (req, res) => {
   }
 
   const jobId = `job-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
-  jobs.set(jobId, { status: "processing", progress: "Starting ingestion...", stored: 0 });
+  jobs.set(jobId, {
+    status: "processing",
+    progress: "Starting ingestion...",
+    stored: 0,
+  });
 
   // Acknowledge immediately
   res.status(202).json({
@@ -278,7 +305,9 @@ app.post("/ingest/github", async (req, res) => {
       try {
         files = await fetchGitHubRepo(repoUrl);
       } catch (fetchErr) {
-        console.error(`[${jobId}] Failed to fetch repository: ${fetchErr.message}`);
+        console.error(
+          `[${jobId}] Failed to fetch repository: ${fetchErr.message}`,
+        );
         jobs.set(jobId, {
           status: "failed",
           error: fetchErr.message,
@@ -296,41 +325,62 @@ app.post("/ingest/github", async (req, res) => {
         status: "processing",
         progress: `Generating embeddings...`,
         totalChunks: files.length,
-        stored: 0
+        stored: 0,
       });
 
-      console.log(`[${jobId}] Fetched ${files.length} file chunks, starting embedding & storage...`);
+      console.log(
+        `[${jobId}] Fetched ${files.length} file chunks, starting embedding & storage...`,
+      );
 
       let validRecords = 0;
-      let skippedEmpty = 0; let skippedUseless = 0; let skippedSmall = 0;
-      let embeddingFailed = 0; let invalidEmbedding = 0; let upsertFailed = 0;
+      let skippedEmpty = 0;
+      let skippedUseless = 0;
+      let skippedSmall = 0;
+      let embeddingFailed = 0;
+      let invalidEmbedding = 0;
+      let upsertFailed = 0;
 
       const recordsToUpsert = [];
 
       // Filter out useless files early
       const validFiles = files.filter((f) => {
-        if (!f?.text || f.text.trim().length === 0) { skippedEmpty++; return false; }
-        if (f.file.includes("node_modules") || f.file.includes(".lock")) { skippedUseless++; return false; }
-        if (f.text.trim().length < 20) { skippedSmall++; return false; }
+        if (!f?.text || f.text.trim().length === 0) {
+          skippedEmpty++;
+          return false;
+        }
+        if (f.file.includes("node_modules") || f.file.includes(".lock")) {
+          skippedUseless++;
+          return false;
+        }
+        if (f.text.trim().length < 20) {
+          skippedSmall++;
+          return false;
+        }
         return true;
       });
 
       const EMBED_BATCH_SIZE = 25; // process 25 chunks per model call
       for (let i = 0; i < validFiles.length; i += EMBED_BATCH_SIZE) {
-        await new Promise(r => setTimeout(r, 5)); // yield event loop
+        await new Promise((r) => setTimeout(r, 5)); // yield event loop
 
         const batchFiles = validFiles.slice(i, i + EMBED_BATCH_SIZE);
-        const texts = batchFiles.map(f => f.text);
+        const texts = batchFiles.map((f) => f.text);
 
         try {
           const embeddingsArray = await getEmbedding(texts);
-          
+
           for (let j = 0; j < batchFiles.length; j++) {
             const file = batchFiles[j];
             const embedding = embeddingsArray[j];
 
-            if (!embedding || !Array.isArray(embedding) || embedding.length !== 384 ||
-                embedding.some((v) => typeof v !== "number" || isNaN(v) || !isFinite(v))) {
+            if (
+              !embedding ||
+              !Array.isArray(embedding) ||
+              embedding.length !== 384 ||
+              embedding.some(
+                (v) => typeof v !== "number" || isNaN(v) || !isFinite(v),
+              )
+            ) {
               invalidEmbedding++;
               continue;
             }
@@ -347,23 +397,25 @@ app.post("/ingest/github", async (req, res) => {
             });
           }
         } catch (err) {
-           console.error(`[${jobId}] Embedding batch failed:`, err.message);
-           embeddingFailed += batchFiles.length;
+          console.error(`[${jobId}] Embedding batch failed:`, err.message);
+          embeddingFailed += batchFiles.length;
         }
       }
 
-      console.log(`[${jobId}] Ready to upsert: ${recordsToUpsert.length} records`);
+      console.log(
+        `[${jobId}] Ready to upsert: ${recordsToUpsert.length} records`,
+      );
       jobs.set(jobId, {
         status: "processing",
         progress: `Saving to database...`,
         totalChunks: files.length,
-        stored: 0
+        stored: 0,
       });
 
       const BATCH_SIZE = 50;
       for (let i = 0; i < recordsToUpsert.length; i += BATCH_SIZE) {
         // YIELD again during batching just in case
-        await new Promise(r => setTimeout(r, 5));
+        await new Promise((r) => setTimeout(r, 5));
 
         const batch = recordsToUpsert.slice(i, i + BATCH_SIZE);
         try {
@@ -376,31 +428,47 @@ app.post("/ingest/github", async (req, res) => {
             status: "processing",
             progress: `Synchronizing records...`,
             totalChunks: files.length,
-            stored: validRecords
+            stored: validRecords,
           });
         } catch (err) {
           upsertFailed += batch.length;
-          console.error(`\n[${jobId}] BATCH UPSERT FAILED (${batch.length} records):`, err.message);
+          console.error(
+            `\n[${jobId}] BATCH UPSERT FAILED (${batch.length} records):`,
+            err.message,
+          );
         }
       }
 
       if (validRecords === 0) {
-        jobs.set(jobId, { status: "failed", error: "Failed to store valid code chunks. Check Pinecone index.", stored: 0 });
+        jobs.set(jobId, {
+          status: "failed",
+          error: "Failed to store valid code chunks. Check Pinecone index.",
+          stored: 0,
+        });
         return;
       }
 
-      console.log(`\n[${jobId}] Ingestion complete: ${validRecords} chunks stored`);
+      console.log(
+        `\n[${jobId}] Ingestion complete: ${validRecords} chunks stored`,
+      );
       jobs.set(jobId, {
         status: "completed",
         message: "Ingestion successful",
         stored: validRecords,
         stats: {
-          totalChunks: files.length, processedRecords: recordsToUpsert.length, validRecords,
-          skipped: { empty: skippedEmpty, useless: skippedUseless, small: skippedSmall, embeddingFailed, invalidEmbedding },
+          totalChunks: files.length,
+          processedRecords: recordsToUpsert.length,
+          validRecords,
+          skipped: {
+            empty: skippedEmpty,
+            useless: skippedUseless,
+            small: skippedSmall,
+            embeddingFailed,
+            invalidEmbedding,
+          },
           upsertFailed,
         },
       });
-
     } catch (err) {
       console.error(`\n[${jobId}] CRITICAL INGESTION ERROR:`, err.message);
       jobs.set(jobId, {
