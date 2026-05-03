@@ -1,14 +1,15 @@
-# DevAssist AI 🤖
+﻿# DevAssist AI 🤖
 
-A powerful RAG (Retrieval-Augmented Generation) based AI assistant designed specifically for developers. It helps you understand and work with your codebase by ingesting GitHub repositories and providing intelligent answers to your questions.
+A developer-focused RAG (Retrieval-Augmented Generation) assistant that ingests GitHub repositories, answers code-related questions, and falls back to web search when repository context is insufficient.
 
 ## ✨ Features
 
-- **Repository Ingestion**: Ingest entire GitHub repositories for context-aware assistance
-- **Intelligent Q&A**: Ask questions about your codebase and get precise answers
-- **Web Search Integration**: Falls back to web search when codebase context is insufficient
-- **Vector Search**: Uses Pinecone for fast, semantic code search
-- **Modern UI**: Clean, responsive React interface with syntax highlighting
+- **Repository Ingestion**: Ingest GitHub repos and build searchable vector context
+- **Repo-Specific Queries**: Select a repo and ask questions only against that repository
+- **Web Search Fallback**: Uses Tavily when repo or LLM context is missing
+- **Sources in Answers**: Returns both repo file links and web search sources
+- **Vector Search**: Pinecone-powered semantic retrieval
+- **React UI**: Clean Vite + React interface with chat and sources
 - **Caching**: Intelligent caching for improved performance
 - **Multi-Model Support**: Supports various Groq models (Llama, Mixtral)
 
@@ -27,17 +28,15 @@ A powerful RAG (Retrieval-Augmented Generation) based AI assistant designed spec
                        └─────────────────┘    └─────────────────┘
 ```
 
-## � Quick Start
+## 🚀 Quick Start
 
 ### Prerequisites
 
 - Node.js 18+
-- GitHub account (for repository access)
-- API keys for:
-  - [Pinecone](https://pinecone.io) (vector database - must be **dense** index with 384 dimensions)
-  - [Groq](https://groq.com) (LLM API)
-  - [Tavily](https://tavily.com) (web search - optional)
-  - GitHub Personal Access Token (for higher rate limits)
+- GitHub Personal Access Token (recommended for GitHub API rate limits)
+- Pinecone API key and index
+- Groq API key
+- Tavily API key (optional, but required for web search fallback)
 
 ### Installation
 
@@ -49,143 +48,133 @@ A powerful RAG (Retrieval-Augmented Generation) based AI assistant designed spec
 
 2. **Install dependencies**
    ```bash
-   # Install server dependencies
    npm install
-
-   # Install client dependencies
    cd client
    npm install
    cd ..
    ```
 
-3. **Environment Setup**
-   Create a `.env` file in the root directory:
+3. **Create `.env` in the project root**
    ```env
-   # Pinecone Configuration (must be DENSE index with 384 dimensions)
+   
    PINECONE_API_KEY=your_pinecone_api_key
    PINECONE_INDEX=your_dense_index_name
-
-   # Groq API Configuration
    GROQ_API_KEY=your_groq_api_key
    USE_API=true
-
-   # Web Search (Optional)
    TAVILY_API_KEY=your_tavily_api_key
-
-   # GitHub Token (for higher rate limits)
    GITHUB_TOKEN=ghp_your_github_token
    ```
 
-   **Important:** Your Pinecone index must be configured as **Dense** (not Sparse) with dimension 384 to work with the embedding model.
+   > The Pinecone index must be a **Dense** index with **384 dimensions**.
 
-4. **Start the application**
+4. **Start the backend and frontend**
    ```bash
-   # Start the server (in one terminal)
    npm start
-
-   # Start the client (in another terminal)
    cd client
    npm run dev
    ```
 
 5. **Open your browser**
-   Navigate to `http://localhost:5173`
+   Visit `http://localhost:5173`
 
 ## 📖 Usage
 
-### Ingesting a Repository
+### 1) Ingest a GitHub repository
 
-1. Paste a GitHub repository URL in the input field
-2. Click "Ingest" to process the repository
-3. Wait for the ingestion to complete
+- Paste a GitHub repo URL into the input field
+- Click **Ingest**
+- Wait for the ingestion job to finish
+- The repo is stored in a dedicated namespace
 
-### Asking Questions
+### 2) Select a repo for queries
 
-1. Type your question about the codebase in the chat input
-2. Press Enter or click Send
-3. The AI will provide answers based on the ingested code
+- After ingestion, choose the ingested repo from the dropdown
+- Queries use that repo's data only
 
-### Understanding Responses
+### 3) Ask questions
 
-- **Sources**: Links to relevant files or web pages
-- **🌐 Web Search Used**: Indicates when web search was used for additional context
-- **Code Blocks**: Syntax-highlighted code snippets in responses
+- Enter a question in the chat box
+- Press Enter or click **Send**
+- Answers include:
+  - repo-based sources when available
+  - web search sources when fallback is used
+
+### What happens when repo context is missing?
+
+- The system searches the selected repo namespace in Pinecone first
+- If results are weak or missing, it falls back to Tavily web search
+- The response returns `usedWeb: true` and includes web source links
+
+## 🧠 How it works
+
+1. GitHub repo files are fetched and chunked
+2. Chunks are embedded and stored in Pinecone under a repo-specific namespace
+3. User queries are converted to embeddings and queried against that namespace
+4. If no strong repo context exists, Tavily search is used
+5. Groq completes the answer with repo and/or web context
 
 ## 🛠️ Tech Stack
 
 ### Backend
-- **Node.js** - Runtime environment
-- **Express.js** - Web framework
-- **Pinecone** - Vector database for semantic search
-- **@xenova/transformers** - Local embedding generation
-- **Axios** - HTTP client for API calls
+- Node.js
+- Express.js
+- Pinecone
+- Axios
+- Groq API
+- Tavily API
+- @xenova/transformers
 
 ### Frontend
-- **React 19** - UI framework
-- **Vite** - Build tool and dev server
-- **React Syntax Highlighter** - Code syntax highlighting
-- **React Markdown** - Markdown rendering
+- React 19
+- Vite
+- React Markdown
+- React Syntax Highlighter
 
-### AI/ML
-- **Groq API** - Fast LLM inference
-- **Tavily API** - Web search integration
-- **Transformers.js** - Local embeddings
-
-### Environment Variables
+## 🌐 Environment Variables
 
 | Variable | Description | Required |
 |----------|-------------|----------|
 | `PINECONE_API_KEY` | Pinecone API key | Yes |
-| `PINECONE_INDEX` | Pinecone dense index name (384 dimensions) | Yes |
+| `PINECONE_INDEX` | Pinecone dense index name (384 dims) | Yes |
 | `GROQ_API_KEY` | Groq API key | Yes |
-| `USE_API` | Enable LLM API (set to "true") | Yes |
-| `TAVILY_API_KEY` | Tavily API key for web search | No |
-| `GITHUB_TOKEN` | GitHub Personal Access Token | Recommended |
+| `USE_API` | Enable LLM API | Yes |
+| `TAVILY_API_KEY` | Tavily search API key | Recommended |
+| `GITHUB_TOKEN` | GitHub token for repo access | Recommended |
+| `VITE_API_BASE` | Frontend backend URL | No |
 
-### Pinecone Setup
+## 🚀 Deployment Notes
 
-1. Create a Pinecone account and index
-2. Set dimension to 384 (for the embedding model used)
-3. Configure the index name in your `.env` file
+- Build the client with `cd client && npm run build`
+- Deploy `client/dist` to static hosting
+- Deploy `server.js` to a Node host
+- Set `VITE_API_BASE` to your backend URL in production
 
-## � Deployment
-
-### Backend Deployment
-1. Deploy the server to a platform like Render, Railway, or Heroku
-2. Set all environment variables in your deployment platform
-3. Ensure the server runs on the correct port (uses `process.env.PORT || 3000`)
-
-### Frontend Deployment
-1. Build the client: `cd client && npm run build`
-2. Deploy the `client/dist` folder to Vercel, Netlify, or similar
-3. Set `VITE_API_BASE` environment variable to your backend URL (e.g., `https://your-backend.onrender.com`)
-
-### Client Environment Variables
-For the React client, create environment variables in your deployment platform:
-```env
-VITE_API_BASE=https://your-backend-url.com
-```
-
-## �📁 Project Structure
+## 📁 Project Structure
 
 ```
 devassist-ai/
 ├── server.js              # Express server and API endpoints
-├── rag/
-│   ├── ingest.js         # GitHub repo ingestion logic
-│   └── pinecone.js       # Pinecone utilities
-├── client/               # React frontend
+├── rag/                   # Repository ingestion utilities
+│   ├── ingest.js
+│   └── pinecone.js
+├── client/                # React frontend
 │   ├── src/
-│   │   ├── App.jsx       # Main React component
-│   │   ├── main.jsx      # App entry point
-│   │   └── index.css     # Global styles
-│   ├── public/           # Static assets
-│   └── package.json      # Client dependencies
-├── package.json          # Server dependencies
-├── .env                  # Environment variables (gitignored)
-└── README.md            # This file
+│   │   ├── App.jsx
+│   │   ├── main.jsx
+│   │   └── index.css
+│   ├── public/
+│   └── package.json
+├── package.json           # Server dependencies
+├── README.md              # Project documentation
+└── .env                   # Environment variables (gitignored)
 ```
 
-## 🚨 Disclaimer
+## ⚠️ Notes
 
-This tool is for educational and development purposes. Be mindful of API rate limits and costs when using external services. Always respect repository licenses and terms of service.
+- Repos are stored in isolated Pinecone namespaces for data separation
+- Web search fallback only triggers when repo context is weak or missing
+- Answers include both repo and web sources when available
+
+## 🔒 Disclaimer
+
+Use this tool responsibly. Monitor API usage, respect repository licenses, and avoid exposing secret keys in public repositories.
