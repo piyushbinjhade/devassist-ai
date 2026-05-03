@@ -49,19 +49,21 @@ async function tavilySearch(query) {
 //  QUERY HANDLER
 app.post("/query", async (req, res) => {
   const startTime = Date.now(); // START TIMER
-  const { question } = req.body;
+  const { question, repo } = req.body;
 
   if (!question) {
     return res.json({ answer: "Invalid question" });
   }
 
+  const cacheKey = `${repo || "default"}|${question.toLowerCase().trim()}`;
+
   // CACHE CHECK
-  if (cache.has(question)) {
-    const cached = cache.get(question);
+  if (cache.has(cacheKey)) {
+    const cached = cache.get(cacheKey);
     if (Date.now() - cached.timestamp < CACHE_TTL) {
       return res.json(cached.data);
     } else {
-      cache.delete(question);
+      cache.delete(cacheKey);
     }
   }
 
@@ -75,7 +77,7 @@ app.post("/query", async (req, res) => {
       vector: queryEmbedding,
       topK: 2,
       includeMetadata: true,
-      namespace: "devassist",
+      namespace: repo || "devassist",
     });
 
     const results = queryResponse.matches || [];
@@ -185,16 +187,18 @@ Answer clearly and precisely:
       selectedModel = cachedModels[0];
     }
 
-    const isLowConfidence = topScore < 0.5;
+    const isLowConfidence = topScore < 0.55;
 
     const isBadAnswer =
-      answer.includes("Not enough information") || answer.trim().length < 30;
+      answer.includes("Not enough information") ||
+      answer.includes("no relevant context") ||
+      answer.trim().length < 40;
 
     // detect no results
     const noResults = results.length === 0;
 
-    // better control over web search (only when truly needed)
-    if (noResults || (isLowConfidence && isBadAnswer && topScore < 0.4)) {
+    // use web search when repo context is missing or answer confidence is weak
+    if (noResults || isLowConfidence || isBadAnswer) {
       usedWeb = true;
       const webResults = await tavilySearch(question);
 
@@ -235,8 +239,7 @@ ${question}
       ];
     }
 
-    cache.set(question, {
-      // data: { answer, sources },
+    cache.set(cacheKey, {
       data: { answer, sources, usedWeb },
       timestamp: Date.now(),
     });
