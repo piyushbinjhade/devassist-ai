@@ -137,22 +137,17 @@ Answer clearly and precisely:
 
                           Rules:
                           - Use ONLY the provided context
-                          - Keep answers clean and concise
-                          - DO NOT use bullet points (•)
-                          - Write in short, clear sentences
-                          - Avoid unnecessary formatting
+                          - Provide clear, detailed explanations
+                          - Use paragraphs and numbered/bulleted lists for readability
+                          - Write in complete sentences
+                          - Include relevant code examples when helpful
 
                           Format:
-                          <One-line explanation>
+                          Start with a brief overview paragraph.
 
-                          How it works:
-                          Sentence 1.
-                          Sentence 2.
-                          Sentence 3.
+                          Then explain how it works in numbered steps or bullet points.
 
-                          Why it matters:
-                          Sentence 1.
-                          Sentence 2.
+                          Finally, explain why it matters in a concluding paragraph.
                           `,
                 },
                 { role: "user", content: prompt },
@@ -205,12 +200,13 @@ Answer clearly and precisely:
       const webContext = webResults.map((r) => r.content).join("\n\n");
 
       const newPrompt = `
-Use this web context to answer clearly:
+Use this web context to answer clearly and comprehensively:
 
 ${webContext}
 
-Question:
-${question}
+Question: ${question}
+
+Provide a detailed explanation with paragraphs and lists where appropriate.
 `;
 
       const response = await axios.post(

@@ -1,62 +1,37 @@
 import { useState, useEffect, useRef } from "react";
 import axios from "axios";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3000";
 
-function CodeBlock({ code, language }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(code);
-    setCopied(true);
-
-    setTimeout(() => {
-      setCopied(false);
-    }, 1500);
-  };
-
-  return (
-    <div style={{ position: "relative" }}>
-      <button
-        onClick={handleCopy}
-        style={{
-          position: "absolute",
-          right: "10px",
-          top: "10px",
-          fontSize: "12px",
-          background: copied ? "#16a34a" : "#27272a",
-          border: "none",
-          padding: "4px 8px",
-          borderRadius: "6px",
-          cursor: "pointer",
-          color: "white",
-          transition: "0.2s",
-        }}
-      >
-        {copied ? "Copied ✓" : "Copy"}
-      </button>
-
-      <SyntaxHighlighter
-        language={language}
-        style={vscDarkPlus}
-        customStyle={{
-          borderRadius: "10px",
-          fontSize: "13px",
-          paddingTop: "30px",
-        }}
-      >
-        {code}
-      </SyntaxHighlighter>
-    </div>
-  );
-}
+// Global scrollbar hiding CSS
+const hideScrollbarCSS = `
+  html, body {
+    scrollbar-width: none;
+  }
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar {
+    display: none;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  ::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+`;
 
 function App() {
+  // Inject global CSS on mount
+  useEffect(() => {
+    const style = document.createElement("style");
+    style.textContent = hideScrollbarCSS;
+    document.head.appendChild(style);
+    return () => style.remove();
+  }, []);
   const [chats, setChats] = useState(() => {
     try {
       const saved = localStorage.getItem("devassist_chats");
@@ -99,8 +74,8 @@ function App() {
   const messages = currentChat?.messages || [];
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+    chatEndRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+  }, [activeChatId, messages.length]);
 
   const createNewChat = () => {
     const newChat = {
@@ -139,12 +114,9 @@ function App() {
         components={{
           p: ({ children }) => <div>{children}</div>,
           code({ inline, className, children }) {
-            const match = /language-(\w+)/.exec(className || "");
-            const code = String(children).replace(/\n$/, "").trim();
+            const code = String(children).replace(/\n$/, "");
 
-            return !inline ? (
-              <CodeBlock code={code} language={match?.[1] || "javascript"} />
-            ) : (
+            return (
               <code
                 style={{
                   background: "#27272a",
@@ -487,6 +459,7 @@ const styles = {
     display: "flex",
     flexDirection: "column",
     gap: "8px",
+    scrollbarWidth: "none",
   },
 
   chatListItem: {
@@ -560,6 +533,7 @@ const styles = {
     gap: "16px",
     border: "1px solid #27272a",
     marginBottom: "16px",
+    scrollbarWidth: "none",
   },
 
   message: {
