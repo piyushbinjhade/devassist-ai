@@ -1,4 +1,4 @@
-﻿# DevAssist AI 🤖
+# DevAssist AI 🤖
 
 A developer-focused RAG (Retrieval-Augmented Generation) assistant that ingests GitHub repositories, answers code-related questions, and falls back to web search when repository context is insufficient.
 
@@ -11,7 +11,7 @@ A developer-focused RAG (Retrieval-Augmented Generation) assistant that ingests 
 - **Vector Search**: Pinecone-powered semantic retrieval
 - **React UI**: Clean Vite + React interface with chat and sources
 - **Caching**: Intelligent caching for improved performance
-- **Multi-Model Support**: Supports various Groq models (Llama, Mixtral)
+- **Multi-Model Support**: Supports various Groq cloud models (Llama, Mixtral)
 
 ## Architecture
 
@@ -79,19 +79,15 @@ A developer-focused RAG (Retrieval-Augmented Generation) assistant that ingests 
 
 ## 📖 Usage
 
-### 1) Ingest a GitHub repository
+### 1. Ingest a GitHub repository
 
 - Paste a GitHub repo URL into the input field
 - Click **Ingest**
 - Wait for the ingestion job to finish
 - The repo is stored in a dedicated namespace
 
-### 2) Select a repo for queries
 
-- After ingestion, choose the ingested repo from the dropdown
-- Queries use that repo's data only
-
-### 3) Ask questions
+### 2. Ask questions
 
 - Enter a question in the chat box
 - Press Enter or click **Send**
@@ -102,8 +98,9 @@ A developer-focused RAG (Retrieval-Augmented Generation) assistant that ingests 
 ### What happens when repo context is missing?
 
 - The system searches the selected repo namespace in Pinecone first
-- If results are weak or missing, it falls back to Tavily web search
-- The response returns `usedWeb: true` and includes web source links
+- If results are completely missing or confidence is extremely low, it falls back to Tavily web search
+- Crucially, it merges the web context with the original repository context to generate answer.
+- The response returns `usedWeb: true` and includes web source links alongside repository files
 
 ## 🧠 How it works
 
@@ -174,7 +171,3 @@ devassist-ai/
 - Repos are stored in isolated Pinecone namespaces for data separation
 - Web search fallback only triggers when repo context is weak or missing
 - Answers include both repo and web sources when available
-
-## 🔒 Disclaimer
-
-Use this tool responsibly. Monitor API usage, respect repository licenses, and avoid exposing secret keys in public repositories.
