@@ -51,6 +51,20 @@ app.post("/query", async (req, res) => {
   const startTime = Date.now(); // START TIMER
   const { question, repo } = req.body;
 
+  let namespace = "devassist";
+  if (repo) {
+    try {
+      const cleaned = repo.replace(".git", "").replace(/\/$/, "").trim();
+      if (cleaned.includes("github.com")) {
+        const parts = cleaned.split("/");
+        namespace = `${parts[3]}/${parts[4]}`;
+      } else {
+        const parts = cleaned.split("/");
+        if (parts.length === 2) namespace = `${parts[0]}/${parts[1]}`;
+      }
+    } catch (e) { }
+  }
+
   if (!question) {
     return res.json({ answer: "Invalid question" });
   }
@@ -75,9 +89,9 @@ app.post("/query", async (req, res) => {
     // faster retrieval
     const queryResponse = await index.query({
       vector: queryEmbedding,
-      topK: 2,
+      topK: 15,
       includeMetadata: true,
-      namespace: repo || "devassist",
+      namespace: namespace,
     });
 
     const results = queryResponse.matches || [];
@@ -133,26 +147,24 @@ Answer clearly and precisely:
                 {
                   role: "system",
                   content: `
-                          You are a senior developer assistant.
-
+                          You are an expert developer assistant specialized in codebase analysis.
+                          
+                          Your responsibilities based on the user's question:
+                          1. Explain how specific code works in the provided repository context.
+                          2. Identify and check for potential errors or bugs in the provided code.
+                          3. Clearly explain architectural or structural patterns if asked.
+                          
                           Rules:
-                          - Use ONLY the provided context
-                          - Provide clear, detailed explanations
-                          - Use paragraphs and numbered/bulleted lists for readability
-                          - Write in complete sentences
-                          - Include relevant code examples when helpful
-
-                          Format:
-                          Start with a brief overview paragraph.
-
-                          Then explain how it works in numbered steps or bullet points.
-
-                          Finally, explain why it matters in a concluding paragraph.
+                          - Use the provided context as your source of truth.
+                          - Provide accurate, highly detailed, and technical explanations.
+                          - If the question asks to check for errors, carefully analyze the context code to point out potential issues or logical flaws.
+                          - Use markdown formatting, including code blocks, bullet points, and bold text for readability.
+                          - Do not hallucinate code that is not present in the context, but feel free to suggest fixes for errors.
                           `,
                 },
                 { role: "user", content: prompt },
               ],
-              max_tokens: 200,
+              max_tokens: 2048,
             },
             {
               headers: {
@@ -182,7 +194,7 @@ Answer clearly and precisely:
       selectedModel = cachedModels[0];
     }
 
-    const isLowConfidence = topScore < 0.55;
+    const isLowConfidence = topScore < 0.30;
 
     const isBadAnswer =
       answer.includes("Not enough information") ||
@@ -200,9 +212,13 @@ Answer clearly and precisely:
       const webContext = webResults.map((r) => r.content).join("\n\n");
 
       const newPrompt = `
-Use this web context to answer clearly and comprehensively:
+Use this web context AND the repository context to answer clearly and comprehensively based on the repository code where possible:
 
+Web Context:
 ${webContext}
+
+Repository Context:
+${context || "No relevant repo context found"}
 
 Question: ${question}
 
@@ -214,7 +230,7 @@ Provide a detailed explanation with paragraphs and lists where appropriate.
         {
           model: selectedModel || cachedModels[0],
           messages: [{ role: "user", content: newPrompt }],
-          max_tokens: 200,
+          max_tokens: 2048,
         },
         {
           headers: {
@@ -293,6 +309,18 @@ app.post("/ingest/github", async (req, res) => {
     message: "Ingestion started in the background",
     jobId,
   });
+
+  let namespace = "devassist";
+  try {
+    const cleaned = repoUrl.replace(".git", "").replace(/\/$/, "").trim();
+    if (cleaned.includes("github.com")) {
+      const parts = cleaned.split("/");
+      namespace = `${parts[3]}/${parts[4]}`;
+    } else {
+      const parts = cleaned.split("/");
+      if (parts.length === 2) namespace = `${parts[0]}/${parts[1]}`;
+    }
+  } catch (e) { }
 
   // Run in background
   (async () => {
@@ -420,7 +448,7 @@ app.post("/ingest/github", async (req, res) => {
         try {
           await index.upsert({
             records: batch,
-            namespace: "devassist",
+            namespace: namespace,
           });
           validRecords += batch.length;
           jobs.set(jobId, {

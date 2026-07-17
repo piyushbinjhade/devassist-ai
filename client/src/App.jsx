@@ -163,6 +163,7 @@ function App() {
     try {
       const res = await axios.post(`${API_BASE}/query`, {
         question: currentQuestion,
+        repo: repoUrl,
       });
 
       const botMsg = {
