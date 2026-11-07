@@ -134,6 +134,7 @@ A developer-focused RAG (Retrieval-Augmented Generation) assistant that ingests 
 | `PINECONE_API_KEY` | Pinecone API key | Yes |
 | `PINECONE_INDEX` | Pinecone dense index name (384 dims) | Yes |
 | `GROQ_API_KEY` | Groq API key | Yes |
+| `GROQ_MAX_COMPLETION_TOKENS` | Optional response token limit from 128 to 900; defaults to 900 to stay below common Groq output-token rate limits | No |
 | `USE_API` | Enable LLM API | Yes |
 | `TAVILY_API_KEY` | Tavily search API key | Recommended |
 | `GITHUB_TOKEN` | GitHub token for repo access | Recommended |

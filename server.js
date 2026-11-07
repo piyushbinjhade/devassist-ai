@@ -28,10 +28,22 @@ const CACHE_TTL = 1000 * 60 * 5;
 const GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models";
 const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODEL_CACHE_TTL = 1000 * 60 * 15;
+const DEFAULT_GROQ_MAX_COMPLETION_TOKENS = 900;
 const GROQ_MODEL_PREFERENCES = [
   "llama-3.3-70b-versatile",
   "llama-3.1-8b-instant",
 ];
+
+function getGroqMaxCompletionTokens() {
+  const configuredLimit = Number.parseInt(
+    process.env.GROQ_MAX_COMPLETION_TOKENS || "",
+    10,
+  );
+  if (!Number.isInteger(configuredLimit) || configuredLimit < 128) {
+    return DEFAULT_GROQ_MAX_COMPLETION_TOKENS;
+  }
+  return Math.min(configuredLimit, DEFAULT_GROQ_MAX_COMPLETION_TOKENS);
+}
 
 function getGroqErrorMessage(error) {
   const providerMessage =
@@ -149,7 +161,7 @@ async function generateGroqAnswer(messages) {
           {
             model,
             messages,
-            max_completion_tokens: 2048,
+            max_completion_tokens: getGroqMaxCompletionTokens(),
           },
           {
             headers: groqHeaders(),
