@@ -1,8 +1,8 @@
 .app-shell {
   display: flex;
   width: 100%;
-  min-height: 100vh;
-  min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   background:
     radial-gradient(ellipse at 53% 0%, rgba(84, 69, 160, 0.1), transparent 38%),
@@ -444,6 +444,7 @@
 .workspace {
   display: flex;
   min-width: 0;
+  min-height: 0;
   height: 100vh;
   height: 100dvh;
   flex: 1;
@@ -455,6 +456,7 @@
   display: flex;
   height: 58px;
   min-height: 58px;
+  flex: 0 0 58px;
   align-items: center;
   justify-content: space-between;
   padding: 0 24px;
@@ -510,11 +512,13 @@
   display: flex;
   min-height: 0;
   flex: 1;
+  overflow: hidden;
 }
 
 .conversation {
   display: flex;
   min-width: 0;
+  min-height: 0;
   flex: 1;
   flex-direction: column;
   align-items: center;
@@ -524,13 +528,22 @@
 .welcome {
   display: flex;
   width: min(100%, 660px);
-  flex: 1;
+  min-height: 0;
+  flex: 1 1 0;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: 35px 0 20px;
+  justify-content: safe center;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: clamp(16px, 4vh, 35px) 0 clamp(12px, 2.5vh, 20px);
+  scrollbar-color: #343a45 transparent;
+  scrollbar-width: thin;
   text-align: center;
   animation: welcome-in 300ms ease both;
+}
+
+.welcome > * {
+  flex-shrink: 0;
 }
 
 @keyframes welcome-in {
@@ -757,7 +770,8 @@
 .message-list {
   display: flex;
   width: min(100%, 790px);
-  flex: 1;
+  min-height: 0;
+  flex: 1 1 0;
   flex-direction: column;
   gap: 25px;
   overflow-y: auto;
@@ -1178,6 +1192,7 @@
 
 .composer {
   width: min(100%, 790px);
+  flex: 0 0 auto;
   margin: 0 auto;
   padding: 10px 12px 9px;
   border: 1px solid #343944;
@@ -1269,6 +1284,7 @@ kbd {
 
 .privacy-caption {
   width: min(100%, 790px);
+  flex: 0 0 auto;
   margin: 7px auto 12px;
   color: #545d69;
   font-size: 9px;
@@ -1278,6 +1294,7 @@ kbd {
 .chat-context-notice {
   display: flex;
   width: min(100%, 790px);
+  flex: 0 0 auto;
   align-items: center;
   gap: 9px;
   margin: 0 auto 9px;
@@ -1315,7 +1332,9 @@ kbd {
   display: flex;
   width: 292px;
   min-width: 292px;
+  min-height: 0;
   flex-direction: column;
+  overflow-y: auto;
   padding: 20px 15px;
   border-left: 1px solid var(--border-subtle);
   background: rgba(15, 17, 22, 0.66);

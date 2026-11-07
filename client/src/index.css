@@ -39,8 +39,15 @@ body,
   margin: 0;
 }
 
+html,
+body,
+#root {
+  height: 100vh;
+  height: 100dvh;
+}
+
 body {
-  min-height: 100vh;
+  overflow: hidden;
   background: var(--surface-base);
 }
 
