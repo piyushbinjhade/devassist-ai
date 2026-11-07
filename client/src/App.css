@@ -333,6 +333,30 @@
   flex-direction: column;
   gap: 3px;
   overflow: auto;
+  scrollbar-color: #343741 #111318;
+  scrollbar-width: thin;
+}
+
+.chat-history::-webkit-scrollbar,
+.source-panel::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-history::-webkit-scrollbar-track,
+.source-panel::-webkit-scrollbar-track {
+  background: #111318;
+}
+
+.chat-history::-webkit-scrollbar-thumb,
+.source-panel::-webkit-scrollbar-thumb {
+  border: 1px solid #111318;
+  border-radius: 6px;
+  background: #343741;
+}
+
+.chat-history::-webkit-scrollbar-thumb:hover,
+.source-panel::-webkit-scrollbar-thumb:hover {
+  background: #484d5a;
 }
 
 .history-row {
@@ -1338,6 +1362,8 @@ kbd {
   padding: 20px 15px;
   border-left: 1px solid var(--border-subtle);
   background: rgba(15, 17, 22, 0.66);
+  scrollbar-color: #343741 #111318;
+  scrollbar-width: thin;
 }
 
 .source-panel:not(.source-panel-open) {
