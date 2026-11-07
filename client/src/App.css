@@ -287,6 +287,14 @@
   line-height: 1.5;
 }
 
+.repo-failure p {
+  margin: 0 0 7px;
+}
+
+.repo-failure .retry-button {
+  font-size: 9px;
+}
+
 .repo-link {
   display: inline-flex;
   align-items: center;
@@ -663,6 +671,21 @@
 .welcome-error span {
   color: #c3979b;
   line-height: 1.5;
+}
+
+.retry-ingestion-button {
+  min-height: 29px;
+  gap: 6px;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 130, 140, 0.25);
+  border-radius: 6px;
+  background: rgba(255, 130, 140, 0.08);
+  color: #ffc0c4;
+  font-size: 10px;
+}
+
+.retry-ingestion-button:hover:not(:disabled) {
+  background: rgba(255, 130, 140, 0.15);
 }
 
 .ready-banner {

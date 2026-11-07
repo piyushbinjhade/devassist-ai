@@ -275,10 +275,10 @@ function App() {
     if (loadingChatId === id) setLoadingChatId(null);
   };
 
-  const connectRepository = async (event) => {
-    event.preventDefault();
+  const connectRepository = async (event, retryRepo = null) => {
+    event?.preventDefault();
     setRepoError("");
-    const parsedRepo = parseGitHubRepo(repoInput);
+    const parsedRepo = retryRepo || parseGitHubRepo(repoInput);
     if (!parsedRepo) {
       setRepoError("Enter a GitHub repository URL or owner/repository.");
       return;
@@ -369,6 +369,12 @@ function App() {
     } finally {
       setIsIngesting(false);
     }
+  };
+
+  const retryRepositoryIngestion = () => {
+    if (!repository || isIngesting) return;
+    setRepoInput(repository.url);
+    connectRepository(null, repository);
   };
 
   const sendMessage = async (text = question, retryId = null) => {
@@ -600,7 +606,18 @@ function App() {
                 </div>
               )}
               {repository.status === "failed" && (
-                <p className="repo-failure">{repository.progress}</p>
+                <div className="repo-failure">
+                  <p>{repository.progress}</p>
+                  <button
+                    className="retry-button"
+                    type="button"
+                    onClick={retryRepositoryIngestion}
+                    disabled={isIngesting}
+                  >
+                    <Icon name="retry" size={14} />
+                    Retry indexing
+                  </button>
+                </div>
               )}
               <a
                 className="repo-link"
@@ -619,7 +636,7 @@ function App() {
               {repositoryForm(true)}
             </>
           )}
-          {repoError && repository && (
+          {repoError && repository && repository.status !== "failed" && (
             <p className="inline-error" role="alert">{repoError}</p>
           )}
           {!repository && (
@@ -747,6 +764,15 @@ function App() {
                   <div className="welcome-error" role="alert">
                     <strong>Repository indexing failed</strong>
                     <span>{repository.progress}</span>
+                    <button
+                      className="button retry-ingestion-button"
+                      type="button"
+                      onClick={retryRepositoryIngestion}
+                      disabled={isIngesting}
+                    >
+                      <Icon name="retry" size={15} />
+                      Retry indexing
+                    </button>
                   </div>
                 )}
                 {repository?.status === "ready" && (

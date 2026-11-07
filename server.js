@@ -22,10 +22,176 @@ app.use(
 app.use(express.json());
 
 let cachedModels = null;
-let selectedModel = null;
 
 const cache = new Map();
 const CACHE_TTL = 1000 * 60 * 5;
+const GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models";
+const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_MODEL_CACHE_TTL = 1000 * 60 * 15;
+const GROQ_MODEL_PREFERENCES = [
+  "llama-3.3-70b-versatile",
+  "llama-3.1-8b-instant",
+];
+
+function getGroqErrorMessage(error) {
+  const providerMessage =
+    error?.response?.data?.error?.message ||
+    error?.response?.data?.message ||
+    error?.message ||
+    "Unknown provider error";
+  const status = error?.response?.status;
+  return `Groq API${status ? ` (${status})` : ""}: ${providerMessage}`;
+}
+
+function createGroqError(message, code, statusCode = 502) {
+  const error = new Error(message);
+  error.code = code;
+  error.statusCode = statusCode;
+  return error;
+}
+
+function groqHeaders() {
+  return {
+    Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+    "Content-Type": "application/json",
+  };
+}
+
+async function getGroqModels(forceRefresh = false) {
+  if (!process.env.GROQ_API_KEY) {
+    throw createGroqError(
+      "GROQ_API_KEY is not configured on the server.",
+      "GROQ_NOT_CONFIGURED",
+      503,
+    );
+  }
+
+  if (
+    !forceRefresh &&
+    cachedModels &&
+    Date.now() - cachedModels.fetchedAt < GROQ_MODEL_CACHE_TTL
+  ) {
+    return cachedModels.ids;
+  }
+
+  try {
+    const response = await axios.get(GROQ_MODELS_URL, {
+      headers: groqHeaders(),
+      timeout: 15000,
+    });
+    const ids = response.data?.data
+      ?.map((model) => model.id)
+      .filter((id) => typeof id === "string" && id.length > 0);
+
+    if (!ids?.length) {
+      throw createGroqError(
+        "Groq returned no available models. Check the API account and model access.",
+        "GROQ_NO_MODELS",
+      );
+    }
+
+    cachedModels = { ids, fetchedAt: Date.now() };
+    return ids;
+  } catch (error) {
+    if (error.code?.startsWith("GROQ_")) throw error;
+    throw createGroqError(
+      `Could not retrieve available Groq models. ${getGroqErrorMessage(error)}`,
+      "GROQ_MODELS_FAILURE",
+    );
+  }
+}
+
+function selectGroqModels(modelIds) {
+  const configuredModel = process.env.GROQ_MODEL?.trim();
+  if (configuredModel) {
+    if (!modelIds.includes(configuredModel)) {
+      throw createGroqError(
+        `GROQ_MODEL "${configuredModel}" is not available to this Groq API key. Check GROQ_MODEL or model access.`,
+        "GROQ_MODEL_UNAVAILABLE",
+        503,
+      );
+    }
+    return [configuredModel];
+  }
+
+  const chatModels = modelIds.filter((id) =>
+    /llama|mixtral|gemma|qwen|deepseek|gpt-oss|kimi|compound/i.test(id),
+  );
+  return chatModels.sort((left, right) => {
+    const leftRank = GROQ_MODEL_PREFERENCES.indexOf(left);
+    const rightRank = GROQ_MODEL_PREFERENCES.indexOf(right);
+    return (
+      (leftRank < 0 ? Number.MAX_SAFE_INTEGER : leftRank) -
+      (rightRank < 0 ? Number.MAX_SAFE_INTEGER : rightRank)
+    );
+  });
+}
+
+async function generateGroqAnswer(messages) {
+  let candidates = selectGroqModels(await getGroqModels());
+  if (candidates.length === 0) {
+    throw createGroqError(
+      "Groq did not report any supported chat models. Set GROQ_MODEL to an available chat model.",
+      "GROQ_NO_CHAT_MODELS",
+      503,
+    );
+  }
+
+  const attemptedModels = new Set();
+  let lastError;
+
+  for (let refresh = 0; refresh < 2; refresh += 1) {
+    for (const model of candidates) {
+      attemptedModels.add(model);
+      try {
+        const response = await axios.post(
+          GROQ_CHAT_URL,
+          {
+            model,
+            messages,
+            max_completion_tokens: 2048,
+          },
+          {
+            headers: groqHeaders(),
+            timeout: 60000,
+          },
+        );
+        const answer = response.data?.choices?.[0]?.message?.content;
+        if (typeof answer !== "string" || !answer.trim()) {
+          throw new Error("Groq returned an empty answer.");
+        }
+        return answer;
+      } catch (error) {
+        lastError = error;
+        const status = error.response?.status;
+        const providerMessage = getGroqErrorMessage(error);
+        console.error(`Groq model ${model} failed: ${providerMessage}`);
+        if (status === 401 || status === 403 || status === 429) {
+          throw createGroqError(
+            providerMessage,
+            status === 429 ? "GROQ_RATE_LIMITED" : "GROQ_AUTH_FAILURE",
+            status === 429 ? 429 : 502,
+          );
+        }
+      }
+    }
+
+    if (refresh === 0 && !process.env.GROQ_MODEL) {
+      const refreshedModels = selectGroqModels(await getGroqModels(true));
+      candidates = refreshedModels.filter((model) => !attemptedModels.has(model));
+      if (candidates.length > 0) continue;
+    }
+    break;
+  }
+
+  const detail = lastError
+    ? getGroqErrorMessage(lastError)
+    : "No available model could be selected.";
+  throw createGroqError(
+    `Groq could not complete the request with the available chat models. ${detail}`,
+    "GROQ_FAILURE",
+  );
+}
 
 async function tavilySearch(query) {
   const res = await axios.post("https://api.tavily.com/search", {
@@ -111,34 +277,18 @@ Answer clearly and precisely:
     let answer = "";
     let usedWeb = false;
 
-    if (process.env.USE_API === "true") {
-      if (!cachedModels) {
-        const modelRes = await axios.get(
-          "https://api.groq.com/openai/v1/models",
-          {
-            headers: {
-              Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-            },
-          },
-        );
-
-        cachedModels = modelRes.data.data.map((m) => m.id);
-      }
-
-      const models = cachedModels.filter(
-        (m) => m.includes("llama") || m.includes("mixtral"),
+    if (process.env.USE_API !== "true") {
+      throw createGroqError(
+        "AI answers are disabled. Set USE_API=true and configure GROQ_API_KEY on the server.",
+        "GROQ_DISABLED",
+        503,
       );
+    }
 
-      for (let model of models) {
-        try {
-          const response = await axios.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            {
-              model,
-              messages: [
-                {
-                  role: "system",
-                  content: `
+    answer = await generateGroqAnswer([
+      {
+        role: "system",
+        content: `
                           You are an expert developer assistant specialized in codebase analysis.
                           
                           Your responsibilities based on the user's question:
@@ -153,38 +303,14 @@ Answer clearly and precisely:
                           - Use markdown formatting, including code blocks, bullet points, and bold text for readability.
                           - Do not hallucinate code that is not present in the context, but feel free to suggest fixes for errors.
                           `,
-                },
-                { role: "user", content: prompt },
-              ],
-              max_tokens: 2048,
-            },
-            {
-              headers: {
-                Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-                "Content-Type": "application/json",
-              },
-            },
-          );
-
-          answer = response.data.choices[0].message.content;
-          selectedModel = model;
-          break;
-        } catch {
-          continue;
-        }
-      }
-
-      if (!answer) throw new Error("No working model found");
-    }
+      },
+      { role: "user", content: prompt },
+    ]);
 
     let sources = results.map((r) => ({
       name: r.metadata.source,
       url: r.metadata.url,
     }));
-
-    if (!selectedModel && cachedModels?.length > 0) {
-      selectedModel = cachedModels[0];
-    }
 
     const isLowConfidence = topScore < 0.30;
 
@@ -215,22 +341,14 @@ Question: ${question}
 Provide a detailed explanation with paragraphs and lists where appropriate.
 `;
 
-      const response = await axios.post(
-        "https://api.groq.com/openai/v1/chat/completions",
+      answer = await generateGroqAnswer([
         {
-          model: selectedModel || cachedModels[0],
-          messages: [{ role: "user", content: newPrompt }],
-          max_tokens: 2048,
+          role: "system",
+          content:
+            "Answer using repository evidence first. Clearly label external information and never present web context as proof of repository implementation.",
         },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-        },
-      );
-
-      answer = response.data.choices[0].message.content;
+        { role: "user", content: newPrompt },
+      ]);
 
       sources = [
         ...sources,
@@ -260,7 +378,10 @@ Provide a detailed explanation with paragraphs and lists where appropriate.
     res.json({ answer, sources, usedWeb, metrics });
   } catch (err) {
     console.error("QUERY ERROR:", err?.message || err);
-    res.status(500).json({ error: "Something went wrong" });
+    res.status(err.statusCode || 500).json({
+      error: err.message || "Something went wrong",
+      ...(err.code && { code: err.code }),
+    });
   }
 });
 
