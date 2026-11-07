@@ -1,68 +1,40 @@
 import dotenv from "dotenv";
-// Load server configuration from the root .env file.
 dotenv.config();
 
 import express from "express";
-// Use Axios for all outbound HTTP requests.
 import axios from "axios";
-// Allow the separately hosted browser client to call this API.
 import cors from "cors";
 import { Pinecone } from "@pinecone-database/pinecone";
 import { getEmbedding, fetchGitHubRepo } from "./rag/ingest.js";
 
-// Pinecone is the external vector database. The index must use the same
-// embedding dimension as the local model in rag/ingest.js: 384 values.
 const pc = new Pinecone({
-  // Read the Pinecone secret from the server environment.
   apiKey: process.env.PINECONE_API_KEY,
 });
 
-// Select the configured Pinecone index.
 const index = pc.index(process.env.PINECONE_INDEX);
 
-// Create the Express application instance.
 const app = express();
-// This API currently accepts requests from every origin. That is convenient
-// for local development, but production should restrict this to the client
-// origin and add authentication/rate limiting.
 app.use(
   cors({
-    // Allow cross-origin browser requests during development.
     origin: "*",
   }),
 );
-// Parse JSON request bodies into req.body.
 app.use(express.json());
 
-// Model discovery is cached because the Groq model list changes rarely and
-// querying it for every user question would add latency and API traffic.
 let cachedModels = null;
 let selectedModel = null;
 
-// Query responses are cached only in this Node process. A restart clears the
-// cache, and multiple server instances would each have a different cache.
 const cache = new Map();
-const CACHE_TTL = 1000 * 60 * 5; // 5 minutes
+const CACHE_TTL = 1000 * 60 * 5;
 
-// Tavily provides external context when the repository retrieval is empty or
-// too weak. The returned shape is normalized so the query handler can render
-// web sources alongside GitHub sources.
 async function tavilySearch(query) {
-  // Called by POST /query only when repository retrieval or the generated
-  // answer is considered weak.
-  // Send the question to Tavily's search endpoint.
   const res = await axios.post("https://api.tavily.com/search", {
-    // Authenticate the outbound request.
     api_key: process.env.TAVILY_API_KEY,
-    // Forward the caller's search question.
     query,
-    // Use the basic search mode for fallback context.
     search_depth: "basic",
-    // Limit the amount of web context returned to the LLM.
     max_results: 3,
   });
 
-  // Normalize Tavily results for the query route and frontend.
   return res.data.results.map((r) => ({
     content: r.content,
     title: r.title,
@@ -70,18 +42,10 @@ async function tavilySearch(query) {
   }));
 }
 
-// Main RAG query endpoint:
-// 1. Resolve the repository namespace.
-// 2. Embed the question and retrieve similar chunks from Pinecone.
-// 3. Ask Groq to answer from those chunks.
-// 4. Use Tavily when repository evidence or the generated answer is weak.
 app.post("/query", async (req, res) => {
-  // Called by client/src/App.jsx -> sendMessage() through HTTP POST /query.
-  const startTime = Date.now(); // START TIMER
+  const startTime = Date.now();
   const { question, repo } = req.body;
 
-  // The namespace prevents one repository's chunks from being returned for
-  // another repository. The fallback keeps the endpoint usable without repo.
   let namespace = "devassist";
   if (repo) {
     try {
@@ -102,8 +66,6 @@ app.post("/query", async (req, res) => {
 
   const cacheKey = `${repo || "default"}|${question.toLowerCase().trim()}`;
 
-  // Avoid repeating embedding, vector-search, and LLM work for the same
-  // repository/question pair during the five-minute TTL.
   if (cache.has(cacheKey)) {
     const cached = cache.get(cacheKey);
     if (Date.now() - cached.timestamp < CACHE_TTL) {
@@ -118,8 +80,6 @@ app.post("/query", async (req, res) => {
     const queryEmbedding = queryEmbeddingArr[0];
     console.log("Query embedding length:", queryEmbedding.length);
 
-    // The question uses the same embedding model as repository chunks, which
-    // makes cosine-style vector similarity meaningful in Pinecone.
     const queryResponse = await index.query({
       vector: queryEmbedding,
       topK: 15,
@@ -129,11 +89,8 @@ app.post("/query", async (req, res) => {
 
     const results = queryResponse.matches || [];
     const topScore = results[0]?.score || 0;
-    const resultCount = results.length; // METRIC
+    const resultCount = results.length;
 
-    // Metadata contains the original chunk and source URL. The prompt uses a
-    // shortened chunk to control token usage, even though the stored chunk is
-    // larger (500 characters).
     const context = results
       .map(
         (r) =>
@@ -152,13 +109,9 @@ Answer clearly and precisely:
 `;
 
     let answer = "";
-    // This flag is returned to the UI so users can distinguish repository
-    // answers from answers that also relied on external web context.
     let usedWeb = false;
 
     if (process.env.USE_API === "true") {
-      // Discover compatible models once, then try them in the order returned
-      // by Groq. A failed model does not make the whole request fail yet.
       if (!cachedModels) {
         const modelRes = await axios.get(
           "https://api.groq.com/openai/v1/models",
@@ -224,8 +177,6 @@ Answer clearly and precisely:
       if (!answer) throw new Error("No working model found");
     }
 
-    // Pinecone sources are preserved so the frontend can link users directly
-    // to the relevant GitHub files.
     let sources = results.map((r) => ({
       name: r.metadata.source,
       url: r.metadata.url,
@@ -235,8 +186,6 @@ Answer clearly and precisely:
       selectedModel = cachedModels[0];
     }
 
-    // This threshold is a product heuristic, not a universal truth. It should
-    // be tuned against evaluation questions for the repositories being used.
     const isLowConfidence = topScore < 0.30;
 
     const isBadAnswer =
@@ -244,11 +193,8 @@ Answer clearly and precisely:
       answer.includes("no relevant context") ||
       answer.trim().length < 40;
 
-    // detect no results
     const noResults = results.length === 0;
 
-    // Web search supplements, rather than replaces, repository context. This
-    // lets the answer explain project code while still handling general gaps.
     if (noResults || isLowConfidence || isBadAnswer) {
       usedWeb = true;
       const webResults = await tavilySearch(question);
@@ -295,15 +241,11 @@ Provide a detailed explanation with paragraphs and lists where appropriate.
       ];
     }
 
-    // Cache the final response, including whether web search was used. Metrics
-    // are intentionally calculated after generation so they describe the
-    // complete request latency.
     cache.set(cacheKey, {
       data: { answer, sources, usedWeb },
       timestamp: Date.now(),
     });
 
-    // res.json({ answer, sources, usedWeb });
     const endTime = Date.now();
 
     const metrics = {
@@ -322,13 +264,9 @@ Provide a detailed explanation with paragraphs and lists where appropriate.
   }
 });
 
-// Ingestion jobs are tracked in memory so the API can acknowledge quickly
-// with HTTP 202 while the expensive GitHub/embedding/Pinecone work continues.
-// These records disappear on restart and are not shared across processes.
 const jobs = new Map();
 
 app.get("/ingest/status/:jobId", (req, res) => {
-  // Called by client/src/App.jsx -> ingestRepo() polling every two seconds.
   const job = jobs.get(req.params.jobId);
   if (!job) {
     return res.status(404).json({ error: "Job not found" });
@@ -336,11 +274,7 @@ app.get("/ingest/status/:jobId", (req, res) => {
   res.json(job);
 });
 
-// Starts asynchronous repository ingestion. The frontend polls the status
-// endpoint because this implementation does not use WebSockets or a queue.
 app.post("/ingest/github", async (req, res) => {
-  // Called by client/src/App.jsx -> ingestRepo() through HTTP POST
-  // /ingest/github.
   const { repoUrl } = req.body;
 
   if (!repoUrl) {
@@ -357,8 +291,6 @@ app.post("/ingest/github", async (req, res) => {
     stored: 0,
   });
 
-  // Acknowledge immediately instead of holding the HTTP request open while
-  // embeddings and database writes are performed.
   res.status(202).json({
     message: "Ingestion started in the background",
     jobId,
@@ -376,13 +308,10 @@ app.post("/ingest/github", async (req, res) => {
     }
   } catch (e) { }
 
-  // Run in the same Node process for now. A production system would move this
-  // work to a durable worker queue so jobs survive restarts and scale out.
   (async () => {
     try {
       console.log(`📨 [${jobId}] Starting async ingestion for: ${repoUrl}`);
 
-      // FETCH REPO - Error messages
       let files;
       try {
         files = await fetchGitHubRepo(repoUrl);
@@ -424,8 +353,6 @@ app.post("/ingest/github", async (req, res) => {
 
       const recordsToUpsert = [];
 
-      // Filter before embedding to save local model work and avoid storing
-      // generated noise such as lockfiles, empty chunks, or tiny fragments.
       const validFiles = files.filter((f) => {
         if (!f?.text || f.text.trim().length === 0) {
           skippedEmpty++;
@@ -442,10 +369,9 @@ app.post("/ingest/github", async (req, res) => {
         return true;
       });
 
-      // Batching reduces model-call overhead while keeping memory usage bounded.
       const EMBED_BATCH_SIZE = 25;
       for (let i = 0; i < validFiles.length; i += EMBED_BATCH_SIZE) {
-        await new Promise((r) => setTimeout(r, 5)); // yield event loop
+        await new Promise((r) => setTimeout(r, 5));
 
         const batchFiles = validFiles.slice(i, i + EMBED_BATCH_SIZE);
         const texts = batchFiles.map((f) => f.text);
@@ -457,8 +383,6 @@ app.post("/ingest/github", async (req, res) => {
             const file = batchFiles[j];
             const embedding = embeddingsArray[j];
 
-            // Pinecone rejects vectors with the wrong shape. Validate both the
-            // fixed dimension and numeric values before constructing records.
             if (
               !embedding ||
               !Array.isArray(embedding) ||
@@ -498,11 +422,8 @@ app.post("/ingest/github", async (req, res) => {
         stored: 0,
       });
 
-      // Upsert in bounded batches instead of sending the entire repository in
-      // one request. This limits request size and allows progress reporting.
       const BATCH_SIZE = 50;
       for (let i = 0; i < recordsToUpsert.length; i += BATCH_SIZE) {
-        // YIELD again during batching just in case
         await new Promise((r) => setTimeout(r, 5));
 
         const batch = recordsToUpsert.slice(i, i + BATCH_SIZE);
@@ -568,8 +489,6 @@ app.post("/ingest/github", async (req, res) => {
   })();
 });
 
-// Lightweight health/configuration endpoint. It reports whether credentials
-// are present, not whether each external service is reachable or healthy.
 app.get("/", (req, res) => {
   res.json({
     status: "BACKEND WORKING",
@@ -584,8 +503,6 @@ app.get("/", (req, res) => {
   });
 });
 
-// Bind on all interfaces so the frontend can reach the API in containers or
-// on another device. PORT remains configurable for local and hosted deploys.
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, "0.0.0.0", () => {
