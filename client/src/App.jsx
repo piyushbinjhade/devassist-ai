@@ -688,7 +688,7 @@ function App() {
             {repository?.status === "ready" ? (
               <span className="top-status"><span className="status-dot" /> Repository ready</span>
             ) : (
-              <span className="top-status top-status-muted">Private by design</span>
+              <span className="top-status top-status-muted"></span>
             )}
             <button
               className="icon-button evidence-toggle"
